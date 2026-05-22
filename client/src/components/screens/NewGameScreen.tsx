@@ -1,0 +1,137 @@
+import { useState } from 'react'
+import { ScreenShell } from '../shared/ScreenShell'
+import type { Screen } from '../../App'
+import styles from './screens.module.css'
+
+const ROOM_ADJECTIVES = ['SILENT', 'BURNING', 'FROZEN', 'HAUNTED', 'DIGITAL', 'ANNUAL', 'HOSTILE', 'ISOLATED', 'REDACTED', 'EXPIRED']
+const ROOM_NOUNS      = ['OFFSITE', 'STANDUP', 'RETRO', 'REVIEW', 'SPRINT', 'AUDIT', 'INCIDENT', 'DEBRIEF', 'SYNC', 'HANDOFF']
+
+function generateName() {
+  const adj  = ROOM_ADJECTIVES[Math.floor(Math.random() * ROOM_ADJECTIVES.length)]
+  const noun = ROOM_NOUNS[Math.floor(Math.random() * ROOM_NOUNS.length)]
+  const num  = Math.floor(Math.random() * 99) + 1
+  return `${adj}_${noun}_${num}`
+}
+
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 7 }, (_, i) => i === 3 ? '-' : chars[Math.floor(Math.random() * chars.length)]).join('')
+}
+
+interface Props { onNavigate: (s: Screen) => void }
+
+export default function NewGameScreen({ onNavigate }: Props) {
+  const [roomName, setRoomName]         = useState(generateName)
+  const [mapSize, setMapSize]           = useState<'small' | 'medium' | 'large'>('medium')
+  const [factions, setFactions]         = useState<'random' | 'manual' | 'balanced'>('balanced')
+  const [maxPlayers, setMaxPlayers]     = useState(6)
+  const [roomCode, setRoomCode]         = useState<string | null>(null)
+  const [creating, setCreating]         = useState(false)
+
+  const handleCreate = () => {
+    setCreating(true)
+    setTimeout(() => {
+      setRoomCode(generateCode())
+      setCreating(false)
+    }, 900)
+  }
+
+  return (
+    <ScreenShell title="NEW GAME" onBack={() => onNavigate('main-menu')}>
+      <div className={styles.formGrid}>
+
+        {/* Room name */}
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel}>ROOM NAME</label>
+          <div className={styles.inputRow}>
+            <input
+              className={styles.textInput}
+              value={roomName}
+              onChange={e => setRoomName(e.target.value.toUpperCase())}
+              spellCheck={false}
+              maxLength={28}
+            />
+            <button className={styles.ghostBtn} onClick={() => setRoomName(generateName())}>↺ GEN</button>
+          </div>
+        </div>
+
+        {/* Map size */}
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel}>MAP SIZE</label>
+          <div className={styles.segmented}>
+            {(['small', 'medium', 'large'] as const).map(s => (
+              <button
+                key={s}
+                className={`${styles.seg} ${mapSize === s ? styles.segActive : ''}`}
+                onClick={() => setMapSize(s)}
+              >
+                {s.toUpperCase()}
+                <span className={styles.segSub}>{s === 'small' ? '3 floors' : s === 'medium' ? '5 floors' : '8 floors'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Faction assignment */}
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel}>FACTION ASSIGNMENT</label>
+          <div className={styles.segmented}>
+            {(['random', 'manual', 'balanced'] as const).map(f => (
+              <button
+                key={f}
+                className={`${styles.seg} ${factions === f ? styles.segActive : ''}`}
+                onClick={() => setFactions(f)}
+              >
+                {f.toUpperCase()}
+                <span className={styles.segSub}>{f === 'random' ? 'pure luck' : f === 'manual' ? 'host picks' : 'auto-balanced'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Player count */}
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel}>MAX PLAYERS — <span className={styles.playerCount}>{maxPlayers}</span></label>
+          <div className={styles.sliderRow}>
+            <span className={styles.sliderCap}>4</span>
+            <input
+              type="range" min={4} max={10} step={1}
+              value={maxPlayers}
+              onChange={e => setMaxPlayers(+e.target.value)}
+              className={styles.slider}
+            />
+            <span className={styles.sliderCap}>10</span>
+          </div>
+          <div className={styles.playerPips}>
+            {Array.from({ length: 10 }, (_, i) => (
+              <span key={i} className={`${styles.pip} ${i < maxPlayers ? styles.pipFilled : ''}`} />
+            ))}
+          </div>
+        </div>
+
+        {/* Create button */}
+        <div className={styles.formField}>
+          {!roomCode ? (
+            <button
+              className={`${styles.primaryBtn} ${creating ? styles.primaryBtnLoading : ''}`}
+              onClick={handleCreate}
+              disabled={creating}
+            >
+              {creating ? '[ ALLOCATING SERVER… ]' : '[ CREATE ROOM ]'}
+            </button>
+          ) : (
+            <div className={styles.roomCodeBox}>
+              <span className={styles.roomCodeLabel}>ROOM CODE</span>
+              <span className={styles.roomCode}>{roomCode}</span>
+              <span className={styles.roomCodeHint}>Share this code with players · expires in 15 min</span>
+              <button className={styles.primaryBtn} style={{ marginTop: '1rem' }}>
+                [ OPEN LOBBY ]
+              </button>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </ScreenShell>
+  )
+}

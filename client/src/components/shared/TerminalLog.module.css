@@ -1,0 +1,48 @@
+.terminal {
+  overflow-y: auto;
+  height: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-border) transparent;
+  padding-right: 2px;
+}
+
+.terminal::-webkit-scrollbar { width: 4px; }
+.terminal::-webkit-scrollbar-track { background: transparent; }
+.terminal::-webkit-scrollbar-thumb { background: var(--bg-border); border-radius: 2px; }
+
+.line {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.65;
+  display: flex;
+  gap: 0.5rem;
+  animation: fade-in 0.15s ease;
+}
+
+.time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* type colours */
+.info    { color: var(--text-secondary); }
+.warn    { color: var(--brand-orange); }
+.danger  { color: var(--color-danger); }
+.success { color: var(--color-terminal); }
+.system  { color: var(--brand-purple-light); }
+
+.cursor {
+  color: var(--color-terminal);
+  animation: blink 0.8s step-end infinite;
+  margin-left: 1px;
+}
+
+.prompt {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--color-terminal);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+}

@@ -1,0 +1,386 @@
+/* ─────────────────────────────────────────────────────────────
+   MainMenu.module.css
+   Roguelike corporate terminal aesthetic with Benifex palette
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Overlay ── */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+}
+
+.booted {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* ── Left panel ── */
+.leftPanel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2rem;
+  padding: 3rem 3.5rem;
+  width: min(520px, 48vw);
+  min-width: 340px;
+  background: linear-gradient(
+    135deg,
+    rgba(10, 11, 24, 0.96) 0%,
+    rgba(16, 17, 42, 0.94) 100%
+  );
+  border-right: 1px solid var(--bg-border);
+  animation: slide-up 0.5s ease 0.1s both;
+}
+
+/* ── Title block ── */
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  color: var(--brand-orange);
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.title {
+  font-family: var(--font-mono);
+  font-size: clamp(3rem, 6vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--text-primary);
+  animation: flicker 8s infinite;
+  text-shadow: 0 0 30px rgba(109, 40, 217, 0.5);
+}
+
+.titleAccent {
+  color: var(--brand-purple-light);
+  text-shadow:
+    0 0 10px var(--brand-purple),
+    0 0 30px var(--brand-purple-dark);
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+.titleCursor {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  background: var(--brand-purple-light);
+  margin-top: 0.4rem;
+  animation: blink 1.1s step-end infinite;
+}
+
+.subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  margin-top: 0.2rem;
+}
+
+/* ── Tagline ── */
+.tagline {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  min-height: 2.6rem;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--brand-purple-dark);
+}
+
+.taglineVisible  { opacity: 1; transform: translateY(0); }
+.taglineHidden   { opacity: 0; transform: translateY(4px); }
+
+.taglinePrompt {
+  color: var(--brand-purple-light);
+  opacity: 0.6;
+}
+
+/* ── Navigation ── */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  font-family: var(--font-mono);
+  width: 100%;
+}
+
+.menuItem:hover,
+.menuItemActive {
+  background: var(--bg-panel-hover);
+  border-color: var(--brand-purple);
+  transform: translateX(4px);
+}
+
+.menuItemActive {
+  border-color: var(--brand-purple-light);
+  background: rgba(109, 40, 217, 0.12);
+}
+
+.menuKey {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  min-width: 28px;
+}
+
+.menuItemActive .menuKey {
+  color: var(--brand-orange);
+}
+
+.menuLabel {
+  flex: 1;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-primary);
+}
+
+.menuItemActive .menuLabel {
+  color: var(--brand-purple-light);
+}
+
+.menuArrow {
+  font-size: 0.7rem;
+  color: var(--brand-purple-light);
+  animation: blink 0.9s step-end infinite;
+}
+
+/* ── Description ── */
+.descriptionBox {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  min-height: 2.4rem;
+  line-height: 1.6;
+  padding: 0.6rem 0.75rem;
+  background: rgba(109, 40, 217, 0.06);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--bg-border);
+}
+
+.descriptionPrompt {
+  color: var(--color-terminal);
+}
+
+/* ── Footer ── */
+.footer {
+  display: flex;
+  gap: 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* ── Right panel ── */
+.rightPanel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 3rem;
+  background: rgba(5, 5, 13, 0.55);
+  animation: slide-up 0.5s ease 0.25s both;
+}
+
+/* ── Status board ── */
+.statusBoard {
+  width: 100%;
+  max-width: 460px;
+  background: rgba(10, 11, 24, 0.88);
+  border: 1px solid var(--bg-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 0 40px rgba(109, 40, 217, 0.12),
+    0 2px 24px rgba(0, 0, 0, 0.4);
+}
+
+.statusHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(109, 40, 217, 0.15);
+  border-bottom: 1px solid var(--bg-border);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  color: var(--brand-purple-light);
+  text-transform: uppercase;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-terminal);
+  box-shadow: 0 0 6px var(--color-terminal);
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+.statusSection {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--bg-border);
+}
+
+.statusSection:last-child {
+  border-bottom: none;
+}
+
+.statusSectionTitle {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+
+/* ── Reputation bar ── */
+.repBar {
+  height: 6px;
+  background: var(--bg-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.35rem;
+}
+
+.repFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand-purple), var(--brand-orange));
+  border-radius: 3px;
+  transition: width 0.8s ease;
+}
+
+.repLabel {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 0.6rem;
+}
+
+/* ── Role grid ── */
+.roleGrid {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.roleChip {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  opacity: 0.9;
+}
+
+.roleChipInactive {
+  opacity: 0.25;
+  filter: grayscale(1);
+}
+
+/* ── Log list ── */
+.logList {
+  height: 130px;
+  overflow: hidden;
+}
+
+.logEntry {
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  animation: fade-in 0.3s ease;
+}
+
+.logTime {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.logMsg {
+  color: var(--text-secondary);
+}
+
+.log_info    .logMsg { color: var(--text-secondary); }
+.log_warn    .logMsg { color: var(--brand-orange); }
+.log_danger  .logMsg { color: var(--color-danger); }
+
+.logCursor {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-terminal);
+  animation: blink 1s step-end infinite;
+  margin-top: 0.2rem;
+}
+
+/* ── Objectives ── */
+.objectives {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.obj {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+
+.objDone    { color: var(--color-terminal); }
+.objActive  { color: var(--brand-purple-light); }
+.objPending { color: var(--text-muted); }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .overlay {
+    flex-direction: column;
+  }
+
+  .leftPanel {
+    width: 100%;
+    min-width: unset;
+    padding: 2rem 1.5rem;
+    border-right: none;
+    border-bottom: 1px solid var(--bg-border);
+  }
+
+  .rightPanel {
+    display: none;
+  }
+}
