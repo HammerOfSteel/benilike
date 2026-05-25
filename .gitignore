@@ -37,3 +37,8 @@ yarn-error.log*
 
 # Lock files (keep package-lock.json, ignore yarn)
 yarn.lock
+
+# Large binary assets (keep locally, not in git)
+assets_from_itch/
+*.zip
+*.unitypackage
