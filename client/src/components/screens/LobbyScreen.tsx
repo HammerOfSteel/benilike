@@ -4,6 +4,7 @@ import { TerminalLog } from '../shared/TerminalLog'
 import type { TerminalLine } from '../shared/TerminalLog'
 import { useGameRoom } from '../../store/useGameRoom'
 import { ROLE_LABELS } from '@shared/types'
+import type { StationInfo, TaskId } from '@shared/types'
 import type { Screen } from '../../App'
 import styles from './screens.module.css'
 
@@ -54,6 +55,27 @@ export default function LobbyScreen({ onNavigate }: Props) {
     room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large' }) => {
       useGameRoom.getState().setMapConfig(data.seed, data.mapSize)
       onNavigate('briefing')
+    })
+
+    // These arrive in the same WS burst as game_start — capture them here so
+    // they aren't dropped before GameWorld mounts its own handlers.
+    room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
+      useGameRoom.getState().setStations(data.stations)
+    })
+
+    room.onMessage('effect_update', (d: any) => {
+      useGameRoom.getState().setActiveEffects(d)
+    })
+
+    room.onMessage('meter_update', (d: { workforce: number; opposition: number }) => {
+      useGameRoom.getState().setMeters(d.workforce, d.opposition)
+    })
+
+    room.onMessage('task_complete', (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
+      const gs = useGameRoom.getState()
+      gs.completeTask(data.taskId)
+      gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
+      gs.addIncident(`${data.role.replace('_', ' ')}: ${data.effectDesc}`, 'info')
     })
 
     return () => { room.removeAllListeners() }
