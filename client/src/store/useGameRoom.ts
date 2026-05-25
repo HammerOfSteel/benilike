@@ -14,6 +14,7 @@ export interface LobbyPlayer {
   isBot:     boolean
   disguised: boolean
   slowed:    boolean
+  floor:     number
 }
 
 export interface TaskToast {
@@ -52,6 +53,8 @@ interface GameRoomStore {
   holdStartedAt:    number
   toasts:           TaskToast[]
   monitorSnapshot:  { rackA: number; rackB: number; rackC: number } | null
+  mapSeed:          string
+  mapSize:          'small' | 'medium' | 'large'
 
   setRoom:            (room: Room) => void
   setRole:            (role: PlayerRole, faction: Faction) => void
@@ -66,6 +69,7 @@ interface GameRoomStore {
   addToast:           (toast: Omit<TaskToast, 'id'>) => void
   clearExpiredToasts: () => void
   setMonitorSnapshot: (s: { rackA: number; rackB: number; rackC: number } | null) => void
+  setMapConfig:       (seed: string, size: 'small' | 'medium' | 'large') => void
   clearRoom:          () => void
 }
 
@@ -85,6 +89,8 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   holdStartedAt:    0,
   toasts:           [],
   monitorSnapshot:  null,
+  mapSeed:          '',
+  mapSize:          'small' as const,
 
   setRoom:          (room) => set({ room }),
   setRole:          (myRole, myFaction) => set({ myRole, myFaction }),
@@ -106,6 +112,7 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   })),
   clearExpiredToasts: () => set(s => ({ toasts: s.toasts.filter(t => t.expiresAt > Date.now()) })),
   setMonitorSnapshot: (monitorSnapshot) => set({ monitorSnapshot }),
+  setMapConfig:       (mapSeed, mapSize) => set({ mapSeed, mapSize }),
   clearRoom:          () => set({
     room: null, myRole: null, myFaction: null, players: [], incidents: [],
     workforceMeter: 0, oppositionMeter: 0, gameEnd: null,

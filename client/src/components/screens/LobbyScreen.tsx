@@ -33,6 +33,7 @@ export default function LobbyScreen({ onNavigate }: Props) {
           isBot:     p.isBot     ?? false,
           disguised: p.disguised ?? false,
           slowed:    p.slowed    ?? false,
+          floor:     p.floor     ?? 0,
         }))
       )
     })

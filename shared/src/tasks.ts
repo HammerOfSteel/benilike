@@ -1,4 +1,6 @@
 import type { TaskDef, ZoneId, StationInfo } from './types'
+import { generateMapData } from './mapgen'
+import type { MapData } from './mapgen'
 
 // ── Zone definitions ──────────────────────────────────────────────────────────
 
@@ -128,40 +130,42 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
 }
 
 /**
- * Assigns each task to a station slot within its preferred zone (falling back
- * to main_office when the zone isn't on this map size).
+ * Assigns each task to a station slot derived from the procedural map.
+ * mapData is optional — if omitted it will be generated from seed + mapSize.
  * Returns the full list of StationInfo for every slot across every active zone.
  */
 export function assignStations(
   seed: string,
   mapSize: 'small' | 'medium' | 'large',
   tasks: TaskDef[],
+  mapData?: MapData,
 ): StationInfo[] {
-  const availableZoneIds = new Set(
-    ZONES.filter(z => z.mapSizes.includes(mapSize)).map(z => z.id),
-  )
+  const md = mapData ?? generateMapData(seed, mapSize)
 
-  // Build station slots for each active zone
-  const stations: StationInfo[] = []
+  const stations: StationInfo[]              = []
   const stationsByZone = new Map<ZoneId, StationInfo[]>()
 
-  for (const zone of ZONES) {
-    if (!zone.mapSizes.includes(mapSize)) continue
-    const shuffled = seededShuffle([...zone.stations], seed + zone.id)
-    const slots: StationInfo[] = shuffled.map((pos, i) => ({
-      stationId: `${zone.id}_${i}`,
-      zone: zone.id,
-      x: pos.x,
-      z: pos.z,
-      taskId: null,
+  // Build slots from procedurally generated rooms
+  for (const room of md.rooms) {
+    if (!room.zone) continue
+    const shuffledSlots = seededShuffle(room.slots, seed + room.zone + room.floor)
+    const slots: StationInfo[] = shuffledSlots.map((pos, i) => ({
+      stationId: `${room.zone}_f${room.floor}_${i}`,
+      zone:      room.zone!,
+      x:         pos.x,
+      z:         pos.z,
+      floor:     pos.floor,
+      taskId:    null,
     }))
     stations.push(...slots)
-    stationsByZone.set(zone.id, slots)
+    stationsByZone.set(room.zone, slots)
   }
 
-  // Assign each task to a free slot in its preferred zone (or main_office fallback)
+  const availableZoneIds = new Set(stationsByZone.keys())
+
+  // Assign each task to a free slot in its preferred zone (main_office fallback)
   for (const task of tasks) {
-    const targetZone = availableZoneIds.has(task.zone) ? task.zone : ('main_office' as ZoneId)
+    const targetZone: ZoneId = availableZoneIds.has(task.zone) ? task.zone : 'main_office'
     const slots = stationsByZone.get(targetZone) ?? []
     const freeSlot = slots.find(s => s.taskId === null)
     if (freeSlot) freeSlot.taskId = task.id

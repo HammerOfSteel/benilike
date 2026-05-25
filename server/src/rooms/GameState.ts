@@ -13,6 +13,7 @@ export class Player extends Schema {
   @type('boolean') isBot: boolean     = false
   @type('boolean') disguised: boolean = false
   @type('boolean') slowed: boolean    = false
+  @type('int8')    floor: number      = 0
 }
 
 export class GameState extends Schema {

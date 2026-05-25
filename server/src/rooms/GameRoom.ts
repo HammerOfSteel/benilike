@@ -80,12 +80,13 @@ export class GameRoom extends Room<GameState> {
 
     // ── Message handlers ─────────────────────────────────────────────────────
 
-    this.onMessage('move', (client: Client, data: { x: number; z: number; facing?: number }) => {
+    this.onMessage('move', (client: Client, data: { x: number; z: number; floor?: number; facing?: number }) => {
       const player = this.state.players.get(client.sessionId)
       if (!player) return
       player.x = data.x
       player.z = data.z
-      if (data.facing !== undefined) player.facing = data.facing
+      if (data.floor   !== undefined) player.floor   = data.floor
+      if (data.facing  !== undefined) player.facing  = data.facing
 
       // Cancel hold if player strays too far
       const hold = this.holdState.get(client.sessionId)
@@ -129,6 +130,9 @@ export class GameRoom extends Room<GameState> {
 
       const station = this.stations.get(data.stationId)
       if (!station || station.completedBy) return
+
+      // Floor check — player must be on the same floor as the station
+      if ((station.info.floor ?? 0) !== (player.floor ?? 0)) return
 
       if (station.disabledUntil > this.clock.currentTime) {
         client.send('incident', { message: 'Station offline', severity: 'warn', time: ts() })

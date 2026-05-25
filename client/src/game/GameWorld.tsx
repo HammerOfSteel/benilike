@@ -1,81 +1,189 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
 import { TASK_DEFS } from '@shared/tasks'
+import { generateMapData, isWalkable, CELL_SIZE, FLOOR_HEIGHT, WALL_HEIGHT } from '@shared/mapgen'
+import type { MapData } from '@shared/mapgen'
 import type { StationInfo, TaskId } from '@shared/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const ROOM_HALF     = 11.5
-const ROOM_HALF_Z_N = 15.5
-const ROOM_HALF_Z_S = 9.0
-const SPEED         = 6.0
-const SEND_MS       = 100
-const INTERACT_R    = 2.5
+const SPEED      = 7.0
+const SEND_MS    = 80
+const INTERACT_R = 2.5
+const STAIR_CD   = 1500   // ms cooldown between floor transitions
 
-// ── Shared position (module-level, avoids stale closures) ────────────────────
-const localPos = new THREE.Vector3(0, 0, 6)
+// ── Module-level mutable state (outside React, no stale closure) ──────────────
+const localPos   = new THREE.Vector3(0, 0, 0)
+let   localFloor = 0
+let   lastStair  = 0
 
-// ── Room pieces ───────────────────────────────────────────────────────────────
-function Floor() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[24, 20]} />
-      <meshStandardMaterial color="#141420" />
-    </mesh>
-  )
-}
+// ── Grid renderer (InstancedMesh per floor) ───────────────────────────────────
 
-function Wall({ pos, sz }: { pos: [number, number, number]; sz: [number, number, number] }) {
-  return (
-    <mesh position={pos} castShadow receiveShadow>
-      <boxGeometry args={sz} />
-      <meshStandardMaterial color="#252538" />
-    </mesh>
-  )
-}
+const _m4 = new THREE.Matrix4()
 
-// ── Workstation (glowing task desk) ──────────────────────────────────────────
-function Workstation({ station, hasMyTask, isHolding, isComplete }: {
-  station: StationInfo
-  hasMyTask: boolean
-  isHolding: boolean
-  isComplete: boolean
+function GridLayer({
+  grid, gridW, gridH, floorY,
+}: {
+  grid: Map<string, 0 | 1>; gridW: number; gridH: number; floorY: number
 }) {
-  const color     = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#3a3a52'
-  const emissive  = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
-  const emInt     = isHolding ? 2.0 : hasMyTask ? 0.6 : 0.08
+  const wallRef  = useRef<THREE.InstancedMesh>(null)
+  const floorRef = useRef<THREE.InstancedMesh>(null)
+
+  const { wallMats, floorMats } = useMemo(() => {
+    const wallMs: THREE.Matrix4[]  = []
+    const floorMs: THREE.Matrix4[] = []
+    for (const [key, type] of grid) {
+      const [cx, cz] = key.split(',').map(Number)
+      const wx = (cx - gridW / 2) * CELL_SIZE
+      const wz = (cz - gridH / 2) * CELL_SIZE
+      if (type === 1) {
+        wallMs.push(_m4.clone().setPosition(wx, floorY + WALL_HEIGHT / 2, wz))
+      } else {
+        floorMs.push(_m4.clone().setPosition(wx, floorY, wz))
+      }
+    }
+    return { wallMats: wallMs, floorMats: floorMs }
+  }, [grid, gridW, gridH, floorY])
+
+  useEffect(() => {
+    if (wallRef.current) {
+      wallMats.forEach((m, i) => wallRef.current!.setMatrixAt(i, m))
+      wallRef.current.instanceMatrix.needsUpdate = true
+    }
+    if (floorRef.current) {
+      floorMats.forEach((m, i) => floorRef.current!.setMatrixAt(i, m))
+      floorRef.current.instanceMatrix.needsUpdate = true
+    }
+  }, [wallMats, floorMats])
 
   return (
-    <group position={[station.x, 0, station.z]}>
-      {/* Desk surface */}
-      <mesh position={[0, 0.4, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.8, 0.08, 0.9]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emInt} />
-      </mesh>
-      {/* Legs */}
-      {([[-0.8, -0.35], [0.8, -0.35], [-0.8, 0.35], [0.8, 0.35]] as [number, number][]).map(([lx, lz], i) => (
-        <mesh key={i} position={[lx, 0.2, lz]}>
-          <boxGeometry args={[0.08, 0.4, 0.08]} />
-          <meshStandardMaterial color="#2a2a3e" />
+    <group>
+      <instancedMesh ref={wallRef} args={[undefined, undefined, wallMats.length]} castShadow receiveShadow>
+        <boxGeometry args={[CELL_SIZE, WALL_HEIGHT, CELL_SIZE]} />
+        <meshStandardMaterial color="#2a2840" />
+      </instancedMesh>
+      <instancedMesh ref={floorRef} args={[undefined, undefined, floorMats.length]} receiveShadow>
+        <boxGeometry args={[CELL_SIZE, 0.12, CELL_SIZE]} />
+        <meshStandardMaterial color="#111120" />
+      </instancedMesh>
+    </group>
+  )
+}
+
+// ── Zone accent overlays (coloured floor patches for each room) ───────────────
+const ZONE_COLORS: Record<string, string> = {
+  main_office:    '#1e1b4b',
+  server_room:    '#0f172a',
+  network_closet: '#0c1a2e',
+  hr_corner:      '#1a0f2e',
+  devops_den:     '#0f2e1a',
+  finance_floor:  '#2e1a0f',
+  marketing_hub:  '#2e0f1a',
+  exec_suite:     '#1a1a2e',
+}
+
+function ZoneOverlays({ mapData, floor }: { mapData: MapData; floor: number }) {
+  const floorY = floor * FLOOR_HEIGHT
+  return (
+    <>
+      {mapData.rooms.filter(r => r.floor === floor).map((room, i) => {
+        const w = room.wx2 - room.wx1
+        const d = room.wz2 - room.wz1
+        const cx = (room.wx1 + room.wx2) / 2
+        const cz = (room.wz1 + room.wz2) / 2
+        return (
+          <mesh key={i} position={[cx, floorY + 0.07, cz]} receiveShadow>
+            <boxGeometry args={[w, 0.02, d]} />
+            <meshStandardMaterial color={ZONE_COLORS[room.zone ?? ''] ?? '#1a1a2e'} />
+          </mesh>
+        )
+      })}
+    </>
+  )
+}
+
+// ── Staircase visuals ─────────────────────────────────────────────────────────
+function StaircaseVisuals({ mapData, floor }: { mapData: MapData; floor: number }) {
+  const floorY = floor * FLOOR_HEIGHT
+  const shown  = mapData.staircases.filter(s => s.fromFloor === floor)
+  return (
+    <>
+      {shown.map(s => {
+        const cx = (s.tx1 + s.tx2) / 2
+        const cz = (s.tz1 + s.tz2) / 2
+        const w  = s.tx2 - s.tx1
+        const d  = s.tz2 - s.tz1
+        return (
+          <group key={s.id} position={[cx, floorY, cz]}>
+            <mesh position={[0, 0.12, 0]}>
+              <boxGeometry args={[w, 0.1, d]} />
+              <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.4} transparent opacity={0.7} />
+            </mesh>
+            <pointLight position={[0, 1.5, 0]} intensity={0.7} distance={5} color="#f59e0b" />
+          </group>
+        )
+      })}
+    </>
+  )
+}
+
+// ── Room labels (floating text alternative: simple emissive box sign) ─────────
+function RoomSigns({ mapData, floor }: { mapData: MapData; floor: number }) {
+  const floorY = floor * FLOOR_HEIGHT
+  return (
+    <>
+      {mapData.rooms.filter(r => r.floor === floor).map((room, i) => (
+        <mesh key={i} position={[room.wcx, floorY + WALL_HEIGHT - 0.1, room.wz1 + CELL_SIZE * 0.5]}>
+          <boxGeometry args={[Math.min(room.wx2 - room.wx1 - 1, 8), 0.6, 0.12]} />
+          <meshStandardMaterial
+            color={ZONE_COLORS[room.zone ?? ''] ?? '#1a1a2e'}
+            emissive={ZONE_COLORS[room.zone ?? ''] ?? '#1a1a2e'}
+            emissiveIntensity={1.5}
+          />
         </mesh>
       ))}
-      {/* Monitor */}
-      <mesh position={[0, 0.72, -0.28]}>
-        <boxGeometry args={[0.7, 0.45, 0.04]} />
-        <meshStandardMaterial color="#0f0f23" emissive={emissive} emissiveIntensity={emInt * 0.5} />
+    </>
+  )
+}
+
+// ── Workstation ───────────────────────────────────────────────────────────────
+function Workstation({
+  station, hasMyTask, isHolding, isComplete, floorY,
+}: {
+  station: StationInfo; hasMyTask: boolean
+  isHolding: boolean; isComplete: boolean; floorY: number
+}) {
+  const color    = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#3a3a52'
+  const emissive = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
+  const emInt    = isHolding ? 2.2 : hasMyTask ? 0.6 : 0.08
+
+  return (
+    <group position={[station.x, floorY, station.z]}>
+      <mesh position={[0, 0.44, 0]} castShadow receiveShadow>
+        <boxGeometry args={[1.7, 0.09, 0.85]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emInt} />
       </mesh>
-      {/* Amber/green glow ring when player has task here */}
+      {([[-0.75, -0.32], [0.75, -0.32], [-0.75, 0.32], [0.75, 0.32]] as [number, number][]).map(([lx, lz], i) => (
+        <mesh key={i} position={[lx, 0.2, lz]}>
+          <boxGeometry args={[0.08, 0.4, 0.08]} />
+          <meshStandardMaterial color="#2a2840" />
+        </mesh>
+      ))}
+      <mesh position={[0, 0.72, -0.28]}>
+        <boxGeometry args={[0.68, 0.44, 0.04]} />
+        <meshStandardMaterial color="#0f0f23" emissive={emissive} emissiveIntensity={emInt * 0.4} />
+      </mesh>
       {hasMyTask && !isComplete && (
-        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[1.1, 1.3, 32]} />
+        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[1.05, 1.25, 32]} />
           <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={isHolding ? 3 : 1} transparent opacity={0.55} />
         </mesh>
       )}
       {isComplete && (
-        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[1.1, 1.3, 32]} />
+        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[1.05, 1.25, 32]} />
           <meshStandardMaterial color="#4ade80" emissive="#4ade80" emissiveIntensity={0.8} transparent opacity={0.4} />
         </mesh>
       )}
@@ -83,110 +191,31 @@ function Workstation({ station, hasMyTask, isHolding, isComplete }: {
   )
 }
 
-// ── Server room (racks + ambient, no terminal) ────────────────────────────────
-function ServerRoom() {
-  return (
-    <group>
-      <mesh position={[0, 0.12, -11.5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[16, 9]} />
-        <meshStandardMaterial color="#0d0d1c" />
-      </mesh>
-      <mesh position={[0, 0.06, -7.2]}>
-        <boxGeometry args={[16, 0.12, 0.3]} />
-        <meshStandardMaterial color="#1e1e30" />
-      </mesh>
-      {/* Server racks */}
-      {([-5.5, -3.5, 3.5, 5.5] as number[]).map((rx, i) => (
-        <group key={i}>
-          <mesh position={[rx, 1.1, -14.5]} castShadow>
-            <boxGeometry args={[1.2, 2.2, 1]} />
-            <meshStandardMaterial color="#1a1a2e" />
-          </mesh>
-          <mesh position={[rx, 1.8, -14.02]}>
-            <boxGeometry args={[0.08, 0.08, 0.05]} />
-            <meshStandardMaterial color="#4ADE80" emissive="#4ADE80" emissiveIntensity={2} />
-          </mesh>
-        </group>
-      ))}
-      {/* Railing */}
-      {([-5, -2, 2, 5] as number[]).map((rx, i) => (
-        <mesh key={i} position={[rx, 1, -7.6]}>
-          <boxGeometry args={[0.12, 2, 0.12]} />
-          <meshStandardMaterial color="#3a3a52" />
-        </mesh>
-      ))}
-      <mesh position={[-3.5, 1.5, -7.6]}><boxGeometry args={[3, 0.08, 0.08]} /><meshStandardMaterial color="#3a3a52" /></mesh>
-      <mesh position={[ 3.5, 1.5, -7.6]}><boxGeometry args={[3, 0.08, 0.08]} /><meshStandardMaterial color="#3a3a52" /></mesh>
-      {/* Sign */}
-      <mesh position={[0, 2.6, -7.6]}>
-        <boxGeometry args={[2.2, 0.4, 0.08]} />
-        <meshStandardMaterial color="#6D28D9" emissive="#6D28D9" emissiveIntensity={0.5} />
-      </mesh>
-      <pointLight position={[0, 2.5, -11.5]} distance={9} intensity={0.8} color="#8060ff" />
-    </group>
-  )
-}
+// ── Player mesh ───────────────────────────────────────────────────────────────
+const _v3 = new THREE.Vector3()
 
-function OfficeDungeon({ lockdown }: { lockdown: boolean }) {
-  return (
-    <group>
-      <Floor />
-      {/* Outer walls */}
-      <Wall pos={[ 0,  1.5,  9.25]} sz={[24, 3, 0.5]} />
-      <Wall pos={[ 12, 1.5,  1.0]}  sz={[0.5, 3, 16.5]} />
-
-      {/* West main wall — two segments with gap at z=-5 to z=+1 for Network Closet */}
-      <Wall pos={[-12, 1.5,  5.5]}  sz={[0.5, 3, 7.5]} />  {/* south segment */}
-      <Wall pos={[-12, 1.5, -6.5]}  sz={[0.5, 3, 3.0]} />  {/* north segment  */}
-
-      {/* North divider — gap in centre for server room */}
-      <Wall pos={[-6.5, 1.5, -7]} sz={[9, 3, 0.5]} />
-      <Wall pos={[ 6.5, 1.5, -7]} sz={[9, 3, 0.5]} />
-
-      {/* Server room outer walls */}
-      <Wall pos={[ 0,  1.5, -16]}   sz={[16, 3, 0.5]} />
-      <Wall pos={[-8,  1.5, -11.5]} sz={[0.5, 3, 9]} />
-      <Wall pos={[ 8,  1.5, -11.5]} sz={[0.5, 3, 9]} />
-
-      {/* Network Closet walls (x: -12 to -8, z: -5 to +1) */}
-      <Wall pos={[-10, 1.5, -5.25]} sz={[4, 3, 0.5]} />   {/* north wall  */}
-      <Wall pos={[-10, 1.5,  0.75]} sz={[4, 3, 0.5]} />   {/* south wall  */}
-      {/* Closet sign */}
-      <mesh position={[-9, 2.5, -5.0]}>
-        <boxGeometry args={[1.6, 0.3, 0.06]} />
-        <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.4} />
-      </mesh>
-      <pointLight position={[-10, 2, -2.5]} distance={5} intensity={0.4} color="#38bdf8" />
-
-      {/* Lockdown barrier */}
-      {lockdown && (
-        <mesh position={[0, 1.5, -7.1]}>
-          <boxGeometry args={[4, 3, 0.1]} />
-          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.6} transparent opacity={0.35} />
-        </mesh>
-      )}
-
-      <ServerRoom />
-    </group>
-  )
-}
-
-// ── Players ───────────────────────────────────────────────────────────────────
-function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: {
-  x: number; z: number; facing: number
+function PlayerMesh({
+  x, z, floor: pFloor, facing, faction, isLocal, disguised,
+}: {
+  x: number; z: number; floor: number; facing: number
   faction: string; isLocal: boolean; disguised?: boolean
 }) {
-  const meshRef = useRef<THREE.Group>(null)
+  const groupRef = useRef<THREE.Group>(null)
+  const floorY   = pFloor * FLOOR_HEIGHT
+
   useFrame(() => {
-    if (meshRef.current) {
-      meshRef.current.position.set(x, 0, z)
-      meshRef.current.rotation.y = facing
+    if (groupRef.current) {
+      _v3.set(x, floorY, z)
+      groupRef.current.position.lerp(_v3, 0.25)
+      groupRef.current.rotation.y = facing
     }
   })
+
   const effectiveFaction = (!isLocal && disguised) ? 'workforce' : faction
   const color = isLocal ? '#6D28D9' : effectiveFaction === 'opposition' ? '#ef4444' : '#3b82f6'
+
   return (
-    <group ref={meshRef}>
+    <group ref={groupRef} position={[x, floorY, z]}>
       <mesh position={[0, 0.85, 0]} castShadow>
         <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
         <meshStandardMaterial color={color} />
@@ -205,38 +234,36 @@ function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: {
 
 // ── Follow Camera ─────────────────────────────────────────────────────────────
 const CAM_DESIRED = new THREE.Vector3()
-const CAM_TARGET  = new THREE.Vector3()
+const CAM_LOOKAT  = new THREE.Vector3()
 
-function FollowCamera() {
+function FollowCamera({ currentFloor: _cf }: { currentFloor: number }) {
   const { camera } = useThree()
   useFrame(() => {
-    CAM_TARGET.set(localPos.x, 0, localPos.z)
-    CAM_DESIRED.set(localPos.x + 14, 12, localPos.z + 14)
+    const floorY = localFloor * FLOOR_HEIGHT
+    CAM_LOOKAT.set(localPos.x, floorY, localPos.z)
+    CAM_DESIRED.set(localPos.x + 18, floorY + 16, localPos.z + 18)
     camera.position.lerp(CAM_DESIRED, 0.1)
-    camera.lookAt(CAM_TARGET)
+    camera.lookAt(CAM_LOOKAT)
   })
   return null
 }
 
 // ── Local Player Controller ───────────────────────────────────────────────────
-function LocalPlayerController({ faction, onNearStation }: {
+function LocalPlayerController({
+  faction, mapData, onNearStation,
+}: {
   faction: string
+  mapData: MapData | null
   onNearStation: (st: StationInfo | null) => void
 }) {
-  const keys      = useKeyboard()
+  const keys     = useKeyboard()
   const facingRef = useRef(0)
-  const lastSent  = useRef(0)
-  const groupRef  = useRef<THREE.Group>(null)
-
-  useEffect(() => {
-    localPos.set(0, 0, 6)
-    return () => { localPos.set(0, 0, 6) }
-  }, [])
+  const lastSent = useRef(0)
+  const groupRef = useRef<THREE.Group>(null)
 
   useFrame((_, delta) => {
-    const k = keys.current
+    const k   = keys.current
     let dx = 0, dz = 0
-
     if (k['KeyW'] || k['ArrowUp'])    dz -= 1
     if (k['KeyS'] || k['ArrowDown'])  dz += 1
     if (k['KeyA'] || k['ArrowLeft'])  dx -= 1
@@ -245,56 +272,79 @@ function LocalPlayerController({ faction, onNearStation }: {
     if (dx !== 0 || dz !== 0) {
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
-      const gs = useGameRoom.getState()
-      const speedMult = (faction === 'workforce' && gs.activeEffects.workforceSpeedActive) ? 1.3 : 1.0
-      localPos.x = Math.max(-ROOM_HALF,     Math.min(ROOM_HALF,     localPos.x + dx * SPEED * speedMult * delta))
-      localPos.z = Math.max(-ROOM_HALF_Z_N, Math.min(ROOM_HALF_Z_S, localPos.z + dz * SPEED * speedMult * delta))
+      const gs  = useGameRoom.getState()
+      const spd = (faction === 'workforce' && gs.activeEffects.workforceSpeedActive) ? SPEED * 1.3 : SPEED
+      const nx  = localPos.x + dx * spd * delta
+      const nz  = localPos.z + dz * spd * delta
+
+      if (mapData) {
+        const gw = mapData.gridW, gh = mapData.gridH, grids = mapData.grids
+        if      (isWalkable(nx, nz, localFloor, grids, gw, gh))            { localPos.x = nx; localPos.z = nz }
+        else if (isWalkable(nx, localPos.z, localFloor, grids, gw, gh))    { localPos.x = nx }
+        else if (isWalkable(localPos.x, nz, localFloor, grids, gw, gh))    { localPos.z = nz }
+      } else {
+        localPos.x = nx; localPos.z = nz  // fallback (no collision)
+      }
       facingRef.current = Math.atan2(dx, dz)
     }
 
     if (groupRef.current) {
-      groupRef.current.position.set(localPos.x, 0, localPos.z)
+      groupRef.current.position.set(localPos.x, localFloor * FLOOR_HEIGHT, localPos.z)
       groupRef.current.rotation.y = facingRef.current
     }
 
-    // Station proximity
+    // Staircase transitions
+    if (mapData && Date.now() - lastStair > STAIR_CD) {
+      const stair = mapData.staircases.find(s =>
+        s.fromFloor === localFloor &&
+        localPos.x >= s.tx1 && localPos.x <= s.tx2 &&
+        localPos.z >= s.tz1 && localPos.z <= s.tz2
+      )
+      if (stair) {
+        localFloor = stair.toFloor
+        localPos.set(stair.arrX, 0, stair.arrZ)
+        lastStair = Date.now()
+      }
+    }
+
+    // Station proximity (same floor only)
     const gs = useGameRoom.getState()
-    const myRole = gs.myRole
     const nearStation = gs.stations.find(st => {
+      if ((st.floor ?? 0) !== localFloor) return false
       if (!st.taskId) return false
-      const sx = localPos.x - st.x
-      const sz = localPos.z - st.z
+      const sx = localPos.x - st.x, sz = localPos.z - st.z
       return Math.sqrt(sx * sx + sz * sz) < INTERACT_R
     }) ?? null
-
     onNearStation(nearStation)
 
-    // Hold-E station interaction
-    const wantsHold = nearStation && !!k['KeyE']
+    // Hold-E interaction
+    const wantsHold  = nearStation && !!k['KeyE']
     const currentHold = gs.holdingStationId
 
-    if (wantsHold && nearStation && currentHold !== nearStation.stationId) {
-      const taskDef = TASK_DEFS.find(t => t.id === nearStation.taskId && t.role === myRole)
-      if (taskDef && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
-        gs.setHolding(nearStation.stationId)
-        gs.room?.send('task_hold_start', { stationId: nearStation.stationId })
+    if (wantsHold && nearStation) {
+      const td = TASK_DEFS.find(t => t.id === nearStation.taskId && t.role === gs.myRole)
+      if (td && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
+        if (currentHold !== nearStation.stationId) {
+          gs.setHolding(nearStation.stationId)
+          gs.room?.send('task_hold_start', { stationId: nearStation.stationId })
+        }
       }
     } else if (!wantsHold && currentHold) {
       gs.setHolding(null)
       gs.room?.send('task_hold_cancel', {})
     }
 
-    // Throttled position send
+    // Position broadcast
     const now = performance.now()
     if (now - lastSent.current > SEND_MS) {
-      gs.room?.send('move', { x: localPos.x, z: localPos.z, facing: facingRef.current })
+      gs.room?.send('move', { x: localPos.x, z: localPos.z, floor: localFloor, facing: facingRef.current })
       lastSent.current = now
     }
   })
 
   const color = faction === 'opposition' ? '#ef4444' : '#6D28D9'
   return (
-    <group ref={groupRef} position={[0, 0, 6]}>
+    <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
       <mesh position={[0, 0.85, 0]} castShadow>
         <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
         <meshStandardMaterial color={color} />
@@ -311,12 +361,33 @@ function LocalPlayerController({ faction, onNearStation }: {
   )
 }
 
-// ── Scene root ────────────────────────────────────────────────────────────────
-function Scene({ onNearStation, gameOver }: {
+// ── Scene ─────────────────────────────────────────────────────────────────────
+function Scene({
+  onNearStation, gameOver,
+}: {
   onNearStation: (st: StationInfo | null) => void
   gameOver:      boolean
 }) {
-  const { players, myFaction, room, activeEffects, stations, completedTasks, holdingStationId } = useGameRoom()
+  const { players, myFaction, room, stations, completedTasks, holdingStationId } = useGameRoom()
+  const mapSeed = useGameRoom(s => s.mapSeed)
+  const mapSize = useGameRoom(s => s.mapSize)
+  const myRole  = useGameRoom(s => s.myRole)
+  const [renderFloor, setRenderFloor] = useState(0)
+
+  // Regenerate map from seed (same algorithm as server)
+  const mapData = useMemo<MapData | null>(() => {
+    if (!mapSeed) return null
+    const md = generateMapData(mapSeed, mapSize)
+    // Reset player to start position when map changes
+    localPos.set(md.startX, 0, md.startZ)
+    localFloor = 0
+    return md
+  }, [mapSeed, mapSize])
+
+  // Track local floor for rendering (in render loop)
+  useFrame(() => {
+    if (renderFloor !== localFloor) setRenderFloor(localFloor)
+  })
 
   useEffect(() => {
     if (!room) return
@@ -325,88 +396,81 @@ function Scene({ onNearStation, gameOver }: {
       const gs = useGameRoom.getState()
       gs.setPlayers(
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
-          sessionId: p.sessionId,
-          name:      p.name,
-          x:         p.x      ?? 0,
-          z:         p.z      ?? 0,
-          facing:    p.facing  ?? 0,
-          faction:   p.faction ?? '',
-          role:      p.role    ?? '',
-          connected: p.connected,
-          isBot:     p.isBot   ?? false,
-          disguised: p.disguised ?? false,
-          slowed:    p.slowed    ?? false,
+          sessionId: p.sessionId, name: p.name,
+          x: p.x ?? 0, z: p.z ?? 0, floor: p.floor ?? 0, facing: p.facing ?? 0,
+          faction: p.faction ?? '', role: p.role ?? '',
+          connected: p.connected, isBot: p.isBot ?? false,
+          disguised: p.disguised ?? false, slowed: p.slowed ?? false,
         }))
       )
       if (state.lockdownActive !== undefined) {
         const curr = gs.activeEffects
-        if (curr.lockdownActive !== !!state.lockdownActive) {
+        if (curr.lockdownActive !== !!state.lockdownActive)
           gs.setActiveEffects({ ...curr, lockdownActive: !!state.lockdownActive })
-        }
       }
     })
 
+    room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large' }) => {
+      useGameRoom.getState().setMapConfig(data.seed, data.mapSize)
+    })
     room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
       useGameRoom.getState().setStations(data.stations)
     })
-
     room.onMessage('task_complete', (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
       const gs = useGameRoom.getState()
       gs.completeTask(data.taskId)
       gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
       gs.addIncident(`${data.role.replace('_', ' ')}: ${data.effectDesc}`, 'info')
     })
-
-    room.onMessage('meter_update', (data: { workforce: number; opposition: number }) => {
-      useGameRoom.getState().setMeters(data.workforce, data.opposition)
-    })
-
-    room.onMessage('monitor_snapshot', (data: { rackA: number; rackB: number; rackC: number }) => {
-      useGameRoom.getState().setMonitorSnapshot(data)
-    })
-
-    room.onMessage('effect_update', (data: any) => {
-      useGameRoom.getState().setActiveEffects(data)
-    })
-
-    room.onMessage('game_end', (data: { winner: string; reason: string }) => {
-      useGameRoom.getState().setGameEnd(data.winner, data.reason)
-    })
-
-    room.onMessage('incident', (data: { message: string; severity: string; time: string }) => {
-      useGameRoom.getState().addIncident(data.message, (data.severity as any) ?? 'info', data.time)
-    })
+    room.onMessage('meter_update',     (d: { workforce: number; opposition: number }) => useGameRoom.getState().setMeters(d.workforce, d.opposition))
+    room.onMessage('monitor_snapshot', (d: any) => useGameRoom.getState().setMonitorSnapshot(d))
+    room.onMessage('effect_update',    (d: any) => useGameRoom.getState().setActiveEffects(d))
+    room.onMessage('game_end',         (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
+    room.onMessage('incident',         (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
 
     return () => {}
   }, [room])
 
-  const myRole       = useGameRoom(s => s.myRole)
-  const mySessionId  = room?.sessionId
+  const mySessionId = room?.sessionId
+  const floorY      = renderFloor * FLOOR_HEIGHT
 
   return (
     <>
-      <ambientLight intensity={0.35} color="#8080cc" />
-      <directionalLight position={[8, 14, 8]} intensity={0.9} castShadow shadow-mapSize={[1024, 1024]} />
+      <ambientLight intensity={0.25} color="#7070aa" />
+      <directionalLight position={[20, 30, 20]} intensity={0.8} castShadow shadow-mapSize={[1024, 1024]} />
 
-      <FollowCamera />
+      <FollowCamera currentFloor={renderFloor} />
 
-      <OfficeDungeon lockdown={activeEffects.lockdownActive} />
+      {/* Grid geometry — only current floor */}
+      {mapData && (
+        <group key={`floor-${renderFloor}`}>
+          <GridLayer
+            grid={mapData.grids[renderFloor]}
+            gridW={mapData.gridW}
+            gridH={mapData.gridH}
+            floorY={floorY}
+          />
+          <ZoneOverlays   mapData={mapData} floor={renderFloor} />
+          <StaircaseVisuals mapData={mapData} floor={renderFloor} />
+          <RoomSigns      mapData={mapData} floor={renderFloor} />
+        </group>
+      )}
 
-      {/* Workstations */}
-      {stations.map(st => {
-        const hasMyTask = !!myRole && !!st.taskId && TASK_DEFS.some(t => t.id === st.taskId && t.role === myRole)
-        const isHolding = holdingStationId === st.stationId
+      {/* Workstations — current floor only */}
+      {stations.filter(st => (st.floor ?? 0) === renderFloor).map(st => {
+        const hasMyTask  = !!myRole && !!st.taskId && TASK_DEFS.some(t => t.id === st.taskId && t.role === myRole)
+        const isHolding  = holdingStationId === st.stationId
         const isComplete = !!st.taskId && completedTasks.has(st.taskId)
         return (
-          <Workstation key={st.stationId} station={st} hasMyTask={hasMyTask} isHolding={isHolding} isComplete={isComplete} />
+          <Workstation key={st.stationId} station={st} hasMyTask={hasMyTask}
+            isHolding={isHolding} isComplete={isComplete} floorY={floorY} />
         )
       })}
 
       {/* Remote players */}
       {players.filter(p => p.sessionId !== mySessionId).map(p => (
-        <PlayerMesh
-          key={p.sessionId}
-          x={p.x} z={p.z} facing={p.facing}
+        <PlayerMesh key={p.sessionId}
+          x={p.x} z={p.z} floor={p.floor} facing={p.facing}
           faction={p.faction} isLocal={false} disguised={p.disguised}
         />
       ))}
@@ -415,6 +479,7 @@ function Scene({ onNearStation, gameOver }: {
       {!gameOver && (
         <LocalPlayerController
           faction={myFaction ?? 'workforce'}
+          mapData={mapData}
           onNearStation={onNearStation}
         />
       )}
@@ -430,8 +495,11 @@ export interface GameWorldProps {
 
 export default function GameWorld({ onNearStation, gameOver = false }: GameWorldProps) {
   return (
-    <Canvas shadows camera={{ fov: 50, near: 0.1, far: 300, position: [16, 14, 22] }}
-      style={{ position: 'fixed', inset: 0, zIndex: 0 }}>
+    <Canvas
+      shadows
+      camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
+      style={{ position: 'fixed', inset: 0, zIndex: 0 }}
+    >
       <Scene onNearStation={onNearStation} gameOver={gameOver} />
     </Canvas>
   )

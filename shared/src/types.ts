@@ -56,13 +56,14 @@ export interface StationInfo {
   zone:        ZoneId
   x:           number
   z:           number
+  floor:       number
   taskId:      TaskId | null
 }
 
 // ── Client → Server messages ──────────────────────────────────────────────────
 
 export type ClientMessage =
-  | { type: 'move';             x: number; z: number; facing?: number }
+  | { type: 'move';             x: number; z: number; floor?: number; facing?: number }
   | { type: 'task_hold_start';  stationId: string }
   | { type: 'task_hold_cancel' }
   | { type: 'badge_renewal_done' }
