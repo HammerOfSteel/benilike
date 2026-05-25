@@ -1,10 +1,122 @@
 /* =========================================
    Shared screen component styles
    Used by: CreditsScreen, SettingsScreen,
-   HowToPlayScreen, NewGameScreen, JoinGameScreen
+   HowToPlayScreen, NewGameScreen, JoinGameScreen,
+   LobbyScreen
    ========================================= */
 
-/* ── Terminal wrapper (Credits) ── */
+/* ── Lobby ── */
+.lobbyLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.lobbyCodeBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1.25rem;
+  background: rgba(109, 40, 217, 0.08);
+  border: 1px dashed var(--brand-purple-light);
+  border-radius: var(--radius-md);
+}
+
+.lobbyCode {
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  color: var(--brand-purple-light);
+  text-shadow: 0 0 20px var(--brand-purple);
+}
+
+[data-theme="light"] .lobbyCode { text-shadow: none; }
+
+.playerList {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--bg-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.playerRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  transition: background 0.1s;
+}
+
+.playerRow:last-child { border-bottom: none; }
+.playerRow:hover { background: rgba(109, 40, 217, 0.05); }
+.playerRowDim { opacity: 0.45; }
+
+.playerName {
+  flex: 1;
+  color: var(--text-primary);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.youBadge {
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  color: var(--color-terminal);
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid var(--color-terminal);
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.playerStatus {
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+}
+
+.playerStatusHidden {
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+}
+
+.playerDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bg-border);
+  flex-shrink: 0;
+}
+
+.playerDotOn {
+  background: var(--color-terminal);
+  box-shadow: 0 0 4px var(--color-terminal);
+}
+
+.lobbyEmpty {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 0.85rem 0.85rem;
+  animation: blink 2s step-end infinite;
+}
+
+.lobbyActions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--bg-border);
+  gap: 1rem;
+}
+
+/* ── Terminal wrapper (Credits / Lobby) ── */
 .terminalBox {
   border: 1px solid var(--bg-border);
   border-radius: var(--radius-sm);

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { ScreenShell } from '../shared/ScreenShell'
+import { colyseusClient } from '../../services/colyseusClient'
+import { useGameRoom } from '../../store/useGameRoom'
 import type { Screen } from '../../App'
 import styles from './screens.module.css'
 
@@ -27,13 +29,28 @@ export default function NewGameScreen({ onNavigate }: Props) {
   const [maxPlayers, setMaxPlayers]     = useState(6)
   const [roomCode, setRoomCode]         = useState<string | null>(null)
   const [creating, setCreating]         = useState(false)
+  const [error, setError]               = useState('')
+  const { setRoom }                     = useGameRoom()
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setCreating(true)
-    setTimeout(() => {
+    setError('')
+    try {
+      const room = await colyseusClient.create('game_room', {
+        roomName,
+        mapSize,
+        maxPlayers,
+        factionAssignment: factions,
+      })
+      setRoom(room)
+      setRoomCode(room.id.slice(0, 8).toUpperCase())
+      setTimeout(() => onNavigate('lobby'), 1800)
+    } catch {
+      // Server offline — show mock code for UI demo
       setRoomCode(generateCode())
+      setError('// Server offline — mock code shown for demo')
       setCreating(false)
-    }, 900)
+    }
   }
 
   return (
@@ -124,9 +141,13 @@ export default function NewGameScreen({ onNavigate }: Props) {
               <span className={styles.roomCodeLabel}>ROOM CODE</span>
               <span className={styles.roomCode}>{roomCode}</span>
               <span className={styles.roomCodeHint}>Share this code with players · expires in 15 min</span>
-              <button className={styles.primaryBtn} style={{ marginTop: '1rem' }}>
-                [ OPEN LOBBY ]
-              </button>
+              {error && <span className={styles.errorMsg} style={{ marginTop: '0.25rem' }}>{error}</span>}
+              {!error && (
+                <button className={styles.primaryBtn} style={{ marginTop: '1rem' }}
+                  onClick={() => onNavigate('lobby')}>
+                  [ OPEN LOBBY ]
+                </button>
+              )}
             </div>
           )}
         </div>

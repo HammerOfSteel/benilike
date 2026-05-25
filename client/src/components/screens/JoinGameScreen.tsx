@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ScreenShell } from '../shared/ScreenShell'
+import { colyseusClient } from '../../services/colyseusClient'
+import { useGameRoom } from '../../store/useGameRoom'
 import type { Screen } from '../../App'
 import styles from './screens.module.css'
 
@@ -24,16 +26,44 @@ const MOCK_ROOMS: MockRoom[] = [
 interface Props { onNavigate: (s: Screen) => void }
 
 export default function JoinGameScreen({ onNavigate }: Props) {
-  const [code, setCode]         = useState('')
-  const [joining, setJoining]   = useState<string | null>(null)
-  const [error, setError]       = useState('')
+  const [code, setCode]           = useState('')
+  const [joining, setJoining]     = useState<string | null>(null)
+  const [error, setError]         = useState('')
+  const [liveRooms, setLiveRooms] = useState<MockRoom[] | null>(null)
+  const { setRoom }               = useGameRoom()
 
-  const handleJoin = (roomCode: string) => {
+  // Try to fetch live rooms; fall back to mock
+  useEffect(() => {
+    colyseusClient.getAvailableRooms('game_room')
+      .then(rooms => {
+        if (rooms.length === 0) { setLiveRooms(null); return }
+        setLiveRooms(rooms.map(r => ({
+          code:       r.roomId.slice(0, 8).toUpperCase(),
+          name:       (r.metadata?.roomName as string | undefined) ?? r.roomId,
+          players:    r.clients,
+          max:        r.maxClients,
+          mapSize:    ((r.metadata?.mapSize as string | undefined) ?? 'MEDIUM').toUpperCase() as MockRoom['mapSize'],
+          status:     r.clients >= r.maxClients ? 'IN PROGRESS' : 'OPEN',
+          workforce:  0,
+          opposition: 0,
+        })))
+      })
+      .catch(() => setLiveRooms(null))
+  }, [])
+
+  const handleJoin = async (roomCode: string) => {
     const cleaned = roomCode.replace(/[^A-Z0-9-]/gi, '').toUpperCase()
-    if (cleaned.length < 7) { setError('Room code must be 7 characters (e.g. BNF-4XZ)'); return }
+    if (cleaned.length < 7) { setError('Room code must be 7+ characters (e.g. BNF-4XZ)'); return }
     setError('')
     setJoining(cleaned)
-    setTimeout(() => setJoining(null), 1200)
+    try {
+      const room = await colyseusClient.joinById(cleaned)
+      setRoom(room)
+      onNavigate('lobby')
+    } catch {
+      setError('Room not found, full, or server offline.')
+      setJoining(null)
+    }
   }
 
   const handleInput = (v: string) => {
@@ -89,7 +119,7 @@ export default function JoinGameScreen({ onNavigate }: Props) {
             <span style={{ flex: 1, textAlign: 'center' }}>STATUS</span>
             <span style={{ flex: 0.7 }} />
           </div>
-          {MOCK_ROOMS.map(room => (
+          {(liveRooms ?? MOCK_ROOMS).map(room => (
             <div key={room.code} className={`${styles.roomRow} ${room.status === 'IN PROGRESS' ? styles.roomRowDim : ''}`}>
               <span style={{ flex: 3 }} className={styles.roomName}>{room.name}</span>
               <span style={{ flex: 1, textAlign: 'center' }} className={styles.roomCode2}>{room.code}</span>
@@ -119,7 +149,9 @@ export default function JoinGameScreen({ onNavigate }: Props) {
         </div>
 
         <div className={styles.refreshRow}>
-          <span className={styles.refreshNote}>// Mock data — live browser shows real rooms</span>
+          <span className={styles.refreshNote}>
+            {liveRooms ? '// Live rooms from server' : '// Mock data — server offline'}
+          </span>
         </div>
 
       </div>

@@ -6,9 +6,10 @@ import SettingsScreen from './components/screens/SettingsScreen'
 import HowToPlayScreen from './components/screens/HowToPlayScreen'
 import NewGameScreen from './components/screens/NewGameScreen'
 import JoinGameScreen from './components/screens/JoinGameScreen'
+import LobbyScreen from './components/screens/LobbyScreen'
 import { useTheme } from './store/useTheme'
 
-export type Screen = 'main-menu' | 'new-game' | 'join-game' | 'settings' | 'how-to-play' | 'credits'
+export type Screen = 'main-menu' | 'new-game' | 'join-game' | 'lobby' | 'settings' | 'how-to-play' | 'credits'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('main-menu')
@@ -26,6 +27,7 @@ export default function App() {
       {screen === 'how-to-play' && <HowToPlayScreen onNavigate={setScreen} />}
       {screen === 'new-game'    && <NewGameScreen onNavigate={setScreen} />}
       {screen === 'join-game'   && <JoinGameScreen onNavigate={setScreen} />}
+      {screen === 'lobby'       && <LobbyScreen onNavigate={setScreen} />}
     </div>
   )
 }
