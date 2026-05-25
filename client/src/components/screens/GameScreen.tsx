@@ -165,6 +165,13 @@ export default function GameScreen({ onNavigate }: Props) {
         <div className={styles.hudInteract}>[E] {taskDef.name}</div>
       )}
 
+      {/* ── Wrong-role hint (near a station but it's not your task) ── */}
+      {nearStation && !holdingStationId && !taskDef && nearStation.taskId && !completedTasks.has(nearStation.taskId as any) && (
+        <div className={styles.hudInteract} style={{ opacity: 0.45, fontSize: '0.7rem' }}>
+          not your workstation
+        </div>
+      )}
+
       {/* ── Zone / light-switch HUD (top centre) ── */}
       <div style={{
         position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',

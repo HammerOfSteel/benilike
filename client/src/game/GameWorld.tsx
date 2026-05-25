@@ -570,6 +570,12 @@ function Scene({
     room.onMessage('effect_update',    (d: any) => useGameRoom.getState().setActiveEffects(d))
     room.onMessage('game_end',         (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
     room.onMessage('incident',         (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
+
+    // Recovery: if stations were missed (race with game_start), ask the server to resend
+    if (useGameRoom.getState().stations.length === 0 && useGameRoom.getState().mapSeed !== '') {
+      room.send('request_station_list', {})
+    }
+
     return () => {}
   }, [room])
 

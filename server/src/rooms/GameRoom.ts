@@ -124,6 +124,14 @@ export class GameRoom extends Room<GameState> {
       console.log(`[GameRoom] Game started · ${stationList.length} stations · seed ${this.state.mapSeed}`)
     })
 
+    // Client can re-request the station list (e.g. if it mounted after game_start)
+    this.onMessage('request_station_list', (client: Client) => {
+      if (this.state.phase !== 'playing') return
+      const stationList = Array.from(this.stations.values()).map(s => s.info)
+      client.send('station_list', { stations: stationList })
+      this.broadcastEffects()
+    })
+
     this.onMessage('task_hold_start', (client: Client, data: { stationId: string }) => {
       const player = this.state.players.get(client.sessionId)
       if (!player || this.state.phase !== 'playing') return
