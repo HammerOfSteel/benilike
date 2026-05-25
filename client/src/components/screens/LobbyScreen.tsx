@@ -51,7 +51,8 @@ export default function LobbyScreen({ onNavigate }: Props) {
       onNavigate('main-menu')
     })
 
-    room.onMessage('game_start', () => {
+    room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large' }) => {
+      useGameRoom.getState().setMapConfig(data.seed, data.mapSize)
       onNavigate('briefing')
     })
 

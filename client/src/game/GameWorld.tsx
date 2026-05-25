@@ -410,9 +410,6 @@ function Scene({
       }
     })
 
-    room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large' }) => {
-      useGameRoom.getState().setMapConfig(data.seed, data.mapSize)
-    })
     room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
       useGameRoom.getState().setStations(data.stations)
     })
