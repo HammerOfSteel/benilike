@@ -1,6 +1,8 @@
 # Benilike — Brainstorm
 
 > This is a living conversation space. Questions are added here as they come up during design and development. For each question, 5 options are provided and one is recommended. Mark chosen answers with ✅.
+>
+> **Note:** Questions Q1–Q6 predate the 2026-05-25 redesign (Rogue AI model). Some options in those questions are now superseded — see Q7+ for current design decisions.
 
 ---
 
@@ -161,6 +163,78 @@
 - Should there be an in-game voice chat, or text only? (Proximity chat like Among Us would be amazing.)
 - What happens when a player disconnects mid-match?
 - Should the Opposition know each other's identities from the start, or is there a "trust building" phase?
+
+---
+
+## 2026-05-25 Redesign — Rogue AI Model (Decisions Locked)
+
+The following questions were resolved during the 2026-05-25 design session. Full spec: `docs/superpowers/specs/2026-05-25-rogue-ai-redesign.md`
+
+---
+
+## Q7: Who controls The AI role? ✅ B
+
+> The faction model is being replaced with a 1-vs-all setup. One player is the hidden antagonist.
+
+| # | Option | Notes |
+|---|---|---|
+| A | Server-controlled NPC (fully autonomous) | No human plays it |
+| **B ✅** | **Hidden human player (or bot) assigned AI role** | **Classic Among Us social deduction** |
+| C | Starts NPC, can be claimed by a late-joining player | Hybrid, hard to balance |
+
+**Decision**: ✅ B — One player (human or bot) is secretly assigned The AI role at match start. Same identity format as workers. Bots can fill the role if player count is low.
+
+---
+
+## Q8: Win conditions? ✅ C — Dual condition
+
+| # | Option | Notes |
+|---|---|---|
+| A | Pure elimination (AI kills until majority gone) | Binary, no task incentive |
+| B | Objective race (complete phases vs complete tasks) | Parallel pressure but no emergency moments |
+| **C ✅** | **Dual condition — both sides have two win paths** | **Workers: vote out AI OR hit all sprint quotas. AI: 3 phases + Takeover OR eliminate majority** |
+| D | Survival race against clock | Less readable |
+
+**Decision**: ✅ C — Dual win conditions. Workers are rewarded for productivity AND social deduction. AI has an escalation arc (3 phases) plus a kill path.
+
+---
+
+## Q9: Workforce roles — mechanical weight? ✅ C — Assigned task list
+
+| # | Option | Notes |
+|---|---|---|
+| A | Pure flavour | No mechanical effect |
+| B | Passive speed bonus at home zone | Small benefit |
+| **C ✅** | **Assigned task list — role determines your 3 tasks** | **Personal to-do like Among Us, creates behavioural tells for deduction** |
+| D | Assigned list + speed bonus | Most distinct identity |
+
+**Decision**: ✅ C — Your job title assigns 3 tasks from the shared pool. You can do any task; only your assigned ones count for your personal sprint contribution. This creates deduction opportunities without locking access.
+
+---
+
+## Q10: AI elimination mechanic? ✅ A — Instant shutdown
+
+| # | Option | Notes |
+|---|---|---|
+| **A ✅** | **Instant shutdown + ghost mode (spectate only)** | **Clean, readable, stakes are high** |
+| B | Slow corruption (infect then kill) | Interesting but adds cure mechanic complexity |
+| C | Sabotage + lockdown kill | No direct kill, less tension |
+| D | Recruitment husk (player controls zombie) | Fun but complex |
+
+**Decision**: ✅ A — Shutdown ability (30s cooldown, requires 1s alone with target). Eliminated players enter spectator-only mode: free-roam camera, no interaction, no voting, no chat with living. Ghosts can chat with other ghosts.
+
+---
+
+## Q11: Sprint structure? ✅ B — 2–3 sprints per match
+
+| # | Option | Notes |
+|---|---|---|
+| A | One sprint per match | Simple but one retro moment |
+| **B ✅** | **3 sprints per match** | **Escalating arc, stacking perks, AI grows more dangerous each sprint** |
+| C | Continuous play, sprints are optional events | Freeform but unstructured |
+
+**Decision**: ✅ B — 3 sprints, each ~3 minutes. Sprint size voted pre-game (Small/Medium/Large affects quota + perk tier). Retro meeting at end if quota met; morale penalty if missed. Match ends after Sprint 3 or earlier win condition.
+
 - Do we want a spectator mode for people waiting to join the next match?
 - Is there any kind of power-up or consumable item system?
 - Should NPCs be killable / hackable by the Opposition?

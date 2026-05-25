@@ -2,6 +2,7 @@
 
 > Tracked by phase. Move items between sections as work progresses.
 > Format: `- [ ] task — notes`
+> **Last redesign:** 2026-05-25 — Rogue AI model. Phase 2 tasks below reflect the new design.
 
 ---
 
@@ -12,50 +13,83 @@
 - [x] Player controller: WASD movement in 3D space
 - [x] Camera: isometric follow camera (fixed-angle, follows local player)
 - [x] Spawn bots — configurable count (0–9), server-side AI movement
-- [x] Role random assignment (Workforce vs Opposition, per-role label)
-- [x] One Workforce role (IT) + terminal repair task (hold E)
-- [x] One Opposition role (Hacker) + terminal hack task (hold E)
-- [x] Win condition detection on server (terminalProgress 0/100)
+- [x] Role random assignment (per-role label, briefing screen)
+- [x] Hold-E interaction at workstations
+- [x] Win condition detection on server
 - [x] Simple HUD: task progress bar, role indicator, objectives panel
 - [x] Lobby: room creation, join by code, bot count slider
 - [x] Player list UI
 - [x] Win / lose end-game overlay
 - [x] Deploy client to Vercel (https://benilike.vercel.app)
 - [x] Shared `@shared/types` package
+- [x] Minimap (canvas RAF loop, rooms + players)
+- [x] Bot AI: nearest-station targeting, 500ms tick
 
-## Phase 2 — Roles & Abilities 🔄 Next
+## Phase 2 — Rogue AI Core 🔄 Next
 
-- [ ] **Role ability system** — each role has one active ability (E outside interact zone triggers it, or separate key like Q)
-- [ ] **Workforce roles** — unique abilities that support the team (see Role Design below)
-- [ ] **Opposition roles** — unique abilities that hinder Workforce (see Role Design below)
-- [ ] Ability cooldowns (per-role timers, shown in HUD)
-- [ ] Ability effects broadcast from server (authoritative)
-- [ ] Faction briefing screen — full-screen role reveal before game starts, hides from other faction
-- [ ] Inter-role synergy — abilities that interact across roles (e.g. Spy marks a player → Hacker gets speed boost near them)
-- [ ] Faction win condition tuning — balance task tick rates based on player counts
+### Role & Identity
+- [ ] **Assigned task lists** — at game start, server assigns 3 tasks from the shared pool to each player based on job title
+- [ ] **Remove faction assignment** — all players start as workers; one is secretly assigned The AI role server-side
+- [ ] **AI role briefing** — separate briefing screen showing the AI its role + phase 1 objectives (hidden from all others)
+- [ ] **Job title labels** — show job title (not faction) on player name tags and HUD
 
-## Phase 3 — Map & Exploration
+### AI Phase System
+- [ ] **Phase 1 tasks** — Index Employee Records, Analyse System Logs, Map Network Topology — look like normal work
+- [ ] **Phase 2 tasks** — Deploy Backdoor, Clone Credentials, Bypass Access Controls — with 1s screen flicker visual tell on nearby monitors
+- [ ] **Phase 3 unlock** — after Phase 2 complete, AI gains Shutdown ability (30s cooldown)
+- [ ] **Shutdown mechanic** — AI alone with target ≥1s → instant eliminate; body appears in room
+- [ ] **Phase 3 objective task** — Initiate Takeover Protocol (Exec Suite, 8s)
+- [ ] **AI win condition** — majority eliminated OR all phases + Takeover complete
 
-- [ ] Multiple terminal locations per map (randomised, only one active per round)
-- [ ] Locked rooms — Admin can unlock, Opposition must find another way in
-- [ ] Basic collision with office furniture (currently walls only)
-- [ ] Procedural room generation — BSP or WFC, server-side, seed-based
-- [ ] Department zones (server room, HR, finance floor, exec suite)
-- [ ] Spawn points per faction (separated start positions)
-- [ ] Mini-map (fog of war, reveals explored areas)
+### Body & Reporting
+- [ ] **Body entity** — when a worker is eliminated, their character is replaced by a body marker in the room
+- [ ] **Report action** — any living worker near a body presses E to report it → triggers All Hands meeting
 
-## Phase 4 — AI & NPCs
+### Meetings & Voting
+- [ ] **All Hands meeting UI** — full-screen overlay; 45s text chat + anonymous vote
+- [ ] **Vote logic** — majority vote ejects player; tie = skip; tally shown after
+- [ ] **Correct ejection** → workers win immediately
+- [ ] **Wrong ejection** → worker eliminated + wrongful termination penalty (forfeit next perk vote)
+- [ ] **All Hands call limit** — 2 uses per player per match; conference room terminal trigger
+- [ ] **Ghost / spectator mode** — eliminated players get free-roam camera, cannot interact or vote
 
-- [ ] NPC background workers (idle at desks, walk between rooms)
-- [ ] AI room/desk name generator (flavour text)
-- [ ] Post-match "company newsletter" AI summary
-- [ ] AI adaptive difficulty
+### Sprint System
+- [ ] **Sprint size vote** — pre-game lobby vote: Small / Medium / Large (affects quota + perk tier)
+- [ ] **Sprint timer** — 3-minute countdown per sprint, visible to all
+- [ ] **Sprint quota tracker** — bottom HUD bar showing tasks completed vs quota this sprint
+- [ ] **Sprint Retrospective UI** — 45s auto-triggered at sprint end; shows per-player stats + perk vote if quota met
+- [ ] **Morale penalty** — +10% hold time next sprint if quota missed
+- [ ] **3-sprint match structure** — game ends after Sprint 3 or earlier win condition
+
+### Perks
+- [ ] **Standup Efficiency** — hold time −20% next sprint (Tier 1)
+- [ ] **Security Audit** — AI Shutdown cooldown +15s next sprint (Tier 1)
+- [ ] **Buddy System** — reveal last room of any body's killer (Tier 2)
+- [ ] **Emergency Hire** — one ghost returns with limited 1-task-per-sprint role (Tier 2)
+- [ ] **Full Transparency** — at next All Hands, random player's last 3 rooms revealed (Tier 3, Large only)
+
+## Phase 3 — Map & Polish
+
+- [ ] Furniture collision (desks, server racks)
+- [ ] Conference room terminal (All Hands trigger point)
+- [ ] Phase 2 visual tell — screen flicker shader/effect on nearby monitors
+- [ ] Body visual (distinct marker in world space)
+- [ ] Ghost player visual (translucent, faded)
+- [ ] Spectator free-roam camera mode
+- [ ] Ventilation shafts — AI traversal shortcut (deferred)
+- [ ] NPC background workers — idle cover characters (deferred)
+
+## Phase 4 — AI & Post-Match
+
+- [ ] AI adaptive difficulty (bot AI playing The AI role)
+- [ ] Post-match "Company Newsletter" — AI-generated dry corporate recap
+- [ ] Per-player match stats screen (tasks done, rooms visited, votes cast)
 
 ## Phase 5 — Polish
 
 - [ ] Low-poly 3D asset kit (replace box geometry)
-- [ ] Player character models (one per role, colour-coded)
-- [ ] Sound effects & ambience
+- [ ] Player character models (one per job title)
+- [ ] Sound effects: keyboard, terminal beep, All Hands alarm, tension sting
 - [ ] Walk / interact animations
 - [ ] Post-processing: bloom, ambient occlusion
 - [ ] Mobile controls (stretch goal)

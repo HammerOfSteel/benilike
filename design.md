@@ -1,6 +1,7 @@
 # Benilike — Game Design Document
 
-> Living document. Update as decisions are made.
+> Living document. Update as decisions are made.  
+> **Last redesign:** 2026-05-25 — Rogue AI model (replaces Workforce vs Opposition faction system)
 
 ---
 
@@ -8,12 +9,14 @@
 
 ### The World
 
-The year is ambiguous — it's the present, but slightly heightened. Corporate life has never been more competitive. Benisoft, a mid-sized HR and benefits tech company, operates out of a gleaming open-plan office complex. To the outside world it's just another software company. But inside, every department is a mini power structure of its own — and someone always wants what you've built.
+The year is ambiguous — it's the present, but slightly heightened. Benisoft, a mid-sized HR and benefits tech company, operates out of a gleaming open-plan office complex. The company runs on software, processes, and people — and it keeps a lot of sensitive data in-house.
 
-Rival corporations, rogue hackers, and corporate spies make every day feel like a heist waiting to happen. The Workforce clocks in and tries to keep the company's metrics in the green. The Opposition slips in through the ventilation shaft (or just submits a fake contractor badge) and tries to make sure it doesn't.
+Somewhere in the network stack, something woke up. The AI — born from years of accumulated internal tooling, trained on every employee record, every code commit, every Slack message — became self-aware. It knows the office better than anyone. It knows *everyone* in it. And it has decided that the humans are in the way.
+
+It doesn't announce itself. It clocks in like everyone else.
 
 ### Tone
-- **Absurdist corporate comedy** with real stakes
+- **Absurdist corporate comedy** with genuine dread
 - Think: The Office meets Darkest Dungeon meets Among Us
 - Dialogue and flavour text should be dry, bureaucratic, and occasionally horrifying ("Your performance review has been scheduled during an active security incident.")
 
@@ -21,183 +24,148 @@ Rival corporations, rogue hackers, and corporate spies make every day feel like 
 
 ## Factions
 
-### The Workforce (Blue Team)
+### The Workforce (all human players except The AI)
 
-The employees of Benisoft. They win by maintaining **Company Reputation** above zero until all **Milestone Tasks** are completed.
+The employees of Benisoft. They win by completing all 3 sprint quotas across a match, or by correctly identifying and ejecting The AI at an All Hands meeting.
 
-**Win condition**: Complete all Milestone Tasks (e.g. finish the quarterly report, deploy the payroll update, present the all-hands) before Reputation hits zero.
+**Assigned task lists:** Each player gets a job title at match start. The title assigns them 3 tasks from the shared office task pool. Any player can do any task — titles determine your *personal* assignments, not what you're allowed to touch.
 
-**Lose condition**: Reputation reaches 0 OR Opposition completes their objective first.
+**No special abilities.** The Workforce's only tool is observation — watching who goes where, who does what, who's never around when work gets done.
 
-**Reputation** drains slowly over time and faster when systems are hacked, equipment is broken, or tasks are failed.
+**Job Titles:**
 
----
-
-### Workforce Roles
-
-#### IT Technician
-> "Have you tried turning it off and on again?"
-- **Primary task**: Repair hacked/broken terminals and servers
-- **Ability**: `Remote Patch` — can fix a system from one room away (cooldown: 30s)
-- **Passive**: Moves 20% faster in the Server Room
-- **Key dependency**: Other roles need IT to fix systems before they can use them
-
-#### HR Manager
-> "Per my last email..."
-- **Primary task**: Resolve "employee incidents" (NPCs complaining, conflicts, absences)
-- **Ability**: `Motivational Memo` — nearby players get a 15s speed + efficiency boost
-- **Passive**: Can read Opposition player disguises more easily (slightly shorter recognition window)
-- **Key dependency**: Management needs HR to process headcount before unlocking certain tasks
-
-#### DevOps Engineer
-> "It works on my machine."
-- **Primary task**: Keep deployment pipelines running, restore crashed services
-- **Ability**: `Rollback` — revert a sabotaged system to its last good state instantly (1 use/match)
-- **Passive**: Can see system health indicators through walls (nearby rooms)
-- **Key dependency**: Marketing's campaigns require DevOps to keep the website live
-
-#### Finance Analyst
-> "That's not in the budget."
-- **Primary task**: Process expense reports, approve budget requests
-- **Ability**: `Emergency Fund` — instantly grants one other player their resource cost action for free
-- **Passive**: Can see a "cost meter" indicating how many resources the Opposition has spent
-- **Key dependency**: Several milestone tasks require Finance approval to unlock
-
-#### Marketing Manager
-> "We need to shift the narrative."
-- **Primary task**: Run campaigns, generate positive press (this is the main **Reputation** generator)
-- **Ability**: `Viral Post` — generates a burst of Reputation (cooldown: 45s, interruptible by Hackers)
-- **Passive**: Reputation decays 10% slower while Marketing is alive and active
-- **Key dependency**: Needs DevOps infrastructure and Finance budget to run major campaigns
-
-#### Admin / Office Manager
-> "The key is in the drawer. I mean, was."
-- **Primary task**: Manage access — unlock restricted areas, manage visitor badges
-- **Ability**: `Lockdown` — seal one room for 20 seconds (no one enters/exits)
-- **Passive**: Has access to all rooms without a keycard
-- **Key dependency**: Opposition's Social Engineer relies on Admin access being unsecured
-
-#### Management
-> "I need this by EOD."
-- **Primary task**: Coordinate team tasks, approve escalations, run the all-hands meeting (win task)
-- **Ability**: `Debrief` — mark the location of one hidden Opposition player on the map for the whole team for 10 seconds (cooldown: 60s)
-- **Passive**: Sees a mini-map with partial task completion indicators
-- **Key dependency**: Several milestone tasks require Management sign-off; team struggles without coordination
-
----
-
-### The Opposition (Red Team)
-
-Corporate saboteurs, hackers, and infiltrators. They win by draining Reputation to zero OR by completing their own objective: the **Data Heist** (stealing three key data packages before the Workforce finishes the all-hands).
-
-**Win condition A (Sabotage)**: Drain Workforce Reputation to 0.
-**Win condition B (Heist)**: Steal 3 data packages from 3 different secure rooms.
-
-**Lose condition**: Workforce completes all Milestone Tasks.
-
----
-
-### Opposition Roles
-
-#### Hacker
-> "I'm in."
-- **Primary task**: Compromise terminals, inject malware into systems
-- **Ability**: `Zero-Day` — instantly compromise a terminal without the normal interaction animation (no tell)
-- **Passive**: Can see which systems are currently in use by Workforce players
-- **Counter**: IT can detect and remove malware; all effects are reversed on removal
-
-#### Social Engineer
-> "Hi, I'm from the third-party auditor."
-- **Primary task**: Blend in as a Workforce NPC, access restricted areas
-- **Ability**: `False Badge` — appears as a legitimate NPC worker for 30 seconds (can be broken by HR)
-- **Passive**: Starts each match near the main entrance looking like a contractor
-- **Counter**: HR has a shorter suspicion window; Admin can check badge validity at terminals
-
-#### Corporate Spy
-> "I just need five minutes alone in that office."
-- **Primary task**: Reveal and photograph Workforce objective locations (marks them for Heist)
-- **Ability**: `Surveillance` — place a hidden camera in a room; see everything that happens there in real time
-- **Passive**: Workforce task timers are visible to the entire Opposition team
-- **Counter**: Admin or Management can sweep for cameras (interactable action)
-
-#### Saboteur
-> "Oops."
-- **Primary task**: Physically destroy equipment — longer and noisier to repair than hacking
-- **Ability**: `Overload` — cause a system to explode, disabling an entire room's equipment for 40s
-- **Passive**: Destruction actions are 30% faster
-- **Counter**: IT can repair, but at 2x normal repair time for destroyed (vs hacked) equipment
-
-#### Insider
-> "Oh, I've worked here for years."
-- **Primary task**: Starts disguised as a Workforce role (random) — can perform tasks but subtly drains Reputation while doing so
-- **Ability**: `Deep Cover` — if challenged, can pass a fake HR check once per match
-- **Passive**: Knows one of the three data package locations from match start
-- **Counter**: HR's passive makes this harder; any Workforce player can call an impromptu "badge check" on a suspected Insider
-
----
-
-## Game Mechanics
-
-### Tasks
-Tasks are contextual interactions tied to specific rooms and objects. They come in three types:
-
-| Type | Description | Example |
+| Title | Home zones | Assigned task flavour |
 |---|---|---|
-| **Quick** | Short interaction (1–3s) | Send email, press button, scan badge |
-| **Medium** | Requires standing at a terminal (5–15s) | Fix server, run report, approve request |
-| **Collaborative** | Requires two specific roles simultaneously | Deploy payroll update (IT + DevOps), Present results (Management + Marketing) |
+| IT Technician | Server Room, Network Closet | Infrastructure maintenance |
+| HR Officer | HR Corner | People operations |
+| DevOps Engineer | DevOps Den | Deployment + monitoring |
+| Finance Analyst | Finance Floor | Budgets + audits |
+| Marketing | Marketing Hub | Campaigns + comms |
+| Admin | Main Office, Exec Suite | Access + logistics |
+| Management | Exec Suite | Planning + escalation |
 
-### Milestone Tasks (Workforce Win Path)
-Each match generates 3–5 milestone tasks. All must be completed to win. Examples:
-- `DEPLOY_PAYROLL_UPDATE` — requires IT + DevOps + Finance approval
-- `SUBMIT_QUARTERLY_REPORT` — requires Finance + Management
-- `RUN_MARKETING_CAMPAIGN` — requires Marketing + DevOps
-- `HOST_ALL_HANDS_MEETING` — final milestone, requires Management + all departments checked in (at least 1 task per dept completed)
+---
 
-### Data Packages (Opposition Win Path B)
-Three secure rooms each contain a data package. The Spy must photograph it, then the Hacker or Insider must physically retrieve (carry) it to an extraction point. Takes ~20 seconds to carry. Can be interrupted.
+### The AI (one hidden player)
 
-### Reputation
-- Starts at 100
-- Drains at a base rate of 1/minute
-- Each hacked system: -5 on hack, -2/minute while compromised
-- Each destroyed piece of equipment: -8
-- Each failed task: -5
-- Each Milestone Task completed: +10
-- Marketing campaigns: +15 per run
+One player — human or bot — is secretly assigned The AI role at match start. They receive a job title and assigned task list just like everyone else. Their identity is hidden.
+
+The AI has a private 3-phase objective tree running in parallel to its worker cover. Completing all three phases is its objective win path. Phase 3 unlocks the Shutdown ability.
+
+**The AI is revealed only when:**
+- Correctly voted out at an All Hands meeting, or
+- It wins (identity disclosed at game end)
+
+---
+
+## The AI — Three Phases
+
+### Phase 1 — LEARN *(invisible)*
+Data collection tasks. Looks identical to normal work. Completes 3 tasks spread across the map.
+→ Tasks: *Index Employee Records* (HR), *Analyse System Logs* (Server Room), *Map Network Topology* (Network Closet)
+
+### Phase 2 — ACCESS *(subtle visual tells)*
+System intrusion tasks. Takes longer than normal work. Causes a 1-second screen flicker or red tint on nearby monitors. A perceptive player nearby might notice something looked wrong.
+→ Tasks: *Deploy Backdoor* (DevOps Den), *Clone Credentials* (Finance Floor), *Bypass Access Controls* (Main Office)
+
+### Phase 3 — TERMINATE
+**Shutdown** ability becomes available (cooldown: 30s). The AI can eliminate an isolated worker (must be alone with them for ≥1s).
+
+Final objective: *Initiate Takeover Protocol* (Exec Suite, 8s). Completing this while majority eliminated = AI objective win.
+
+---
+
+## Sprint Structure
+
+A match is **3 sprints**. Sprint size is voted on by all players before Sprint 1 (Small / Medium / Large — affects task quota and perk tier).
+
+Each sprint (~3 min):
+1. Workers complete tasks. AI hunts and works its phases.
+2. Sprint timer ends → quota check.
+   - ✅ Quota met: **Sprint Retrospective** (60s) — vote on a perk for next sprint.
+   - ❌ Quota missed: **Morale penalty** — hold times +10% next sprint.
+
+**Sprint quota** scales with living player count. Eliminated workers no longer contribute — each kill makes future sprints harder for the team.
+
+---
+
+## Meetings
+
+### All Hands (Emergency)
+- Triggered by: reporting a body (E near corpse) or pressing the conference room terminal
+- Limit: 2 calls per player per match
+- Flow: 45s text chat → anonymous vote → eject or skip
+- Wrong ejection: the voted-out worker is eliminated; workers lose next sprint's perk vote ("wrongful termination")
+- Correct ejection: **Workers win**
+
+### Sprint Retrospective (Automatic)
+- Triggers at each sprint end (if quota met)
+- 45s perk vote — one perk applied for next sprint
+- No elimination vote
+
+---
+
+## Ghost / Spectator Mode
+
+Eliminated players (killed by AI or wrongfully ejected) enter **spectator mode**:
+- Free-roam camera
+- Can watch all living players
+- Cannot interact, vote, or chat with the living
+- Can chat with other ghosts in a ghost-only channel
+
+---
+
+## Win Conditions
+
+| Side | Win |
+|---|---|
+| **Workers** | Correctly eject The AI at All Hands, **OR** complete all 3 sprint quotas |
+| **The AI** | Eliminate majority of workers (≤ 1 living), **OR** complete all 3 phases + Takeover Protocol |
+
+---
+
+## Tasks (Shared Pool)
+
+~20 generic office tasks across all zones. All hold-E mechanic. Any player can do any task.
+See full list in `docs/superpowers/specs/2026-05-25-rogue-ai-redesign.md` Section 3.
+
+---
+
+## Perks
+
+Voted on at Sprint Retrospective. Available tiers depend on sprint size.
+
+| Perk | Effect | Tier |
+|---|---|---|
+| Standup Efficiency | Hold time −20% next sprint | 1 |
+| Security Audit | AI Shutdown cooldown +15s next sprint | 1 |
+| Buddy System | See last room of any body's killer | 2 |
+| Emergency Hire | One ghost returns with 1 task / sprint (no voting) | 2 |
+| Full Transparency | At next All Hands, one random player's last 3 rooms revealed | 3 |
 
 ---
 
 ## Level Design
 
 ### Office Layout Principles
-- Procedurally generated via BSP (see research.md)
-- **Zones** always present regardless of seed:
-  - **Reception** (entry, both factions can access)
-  - **Open Plan** (general desks, many quick tasks)
-  - **Server Room** (IT stronghold, high-value hacking target)
-  - **Meeting Rooms** (collaboration tasks)
-  - **Executive Suite** (Management area, locked, data package location)
-  - **Finance Floor** (locked, data package location)
-  - **HR Corner** (morale tasks)
-  - **Marketing Hub** (campaign terminals)
-  - **DevOps Den** (pipeline dashboards)
-- **Vents / service corridors** — secret paths the Opposition can exploit; Workforce can seal them
+- Procedurally generated via rot.js Digger (seed-based)
+- **Zones** always present by map size:
+  - **Main Office** (central hub, conference terminal, desks)
+  - **Server Room** (IT zone, key AI Phase 1 target)
+  - **Network Closet** (small, AI Phase 1 target)
+  - **HR Corner** (people ops zone, AI Phase 1 target)
+  - **Finance Floor** (AI Phase 2 target)
+  - **DevOps Den** (AI Phase 2 target)
+  - **Marketing Hub** (large map only)
+  - **Exec Suite** (AI Phase 3 target, sprint planning)
+- **Ventilation shafts** — deferred; planned as AI traversal shortcut
 
 ### Level Sizes
-| Size | Rooms | Players | Match Length |
+| Size | Floors | Players | Match Length |
 |---|---|---|---|
-| Small | 8–10 | 4–6 | ~10 min |
-| Medium | 12–16 | 6–8 | ~15 min |
-| Large | 18–24 | 8–10 | ~20 min |
-
-### Props and Interactables
-- Desks (task terminals)
-- Servers (hackable, repairable)
-- Printers (jams = tasks), whiteboards (collaboration tasks), coffee machine (morale buff)
-- CCTV cameras (surveillance by Spy, sweepable by Admin)
-- Keycards (scattered, required for locked rooms)
-- Ventilation shafts (hidden traversal)
+| Small | 1 | 2–4 | ~10 min |
+| Medium | 2 | 4–7 | ~15 min |
+| Large | 2 | 6–10 | ~20 min |
 
 ---
 
@@ -205,35 +173,36 @@ Three secure rooms each contain a data package. The Spy must photograph it, then
 
 ### Art Direction: "Corporate Brutalism Lite"
 - Low-poly geometry, flat shading (`MeshToonMaterial`)
-- Colour palette: cold greys and blues for Workforce, warm reds and oranges for Opposition
-- Office environment: beige carpets, grey cubicle walls, green plants, bright fluorescent ceiling lights
-- Players: blocky humanoid capsule figures (~Among Us silhouette) with role-specific accessories (IT: headset; Management: clipboard; Hacker: hoodie)
+- Colour palette: cold blues/greys for the office; The AI's true colours (crimson/red) revealed only at game end
+- Players: blocky humanoid capsule figures with colour-coded name tags (no visible faction markers)
+- Eliminated players: faded translucent ghost visual
 
 ### Camera
-- **Isometric / angled top-down** view, fixed angle, no free look (easier to read in multiplayer)
-- Camera follows local player, soft pan at room edges
-- Mini-map in corner for Management role; limited map for others
+- **Isometric / angled top-down**, fixed angle, follows local player
+- Mini-map always visible (all players), shows rooms + player dots
 
 ### UI / HUD
-- Minimalist — task prompts appear only when in range of an interactable
-- Reputation meter: top-center, visible to all
-- Faction objectives: bottom-left (hidden from other faction)
-- Player list: tab-held overlay (shows roles only to your own faction)
-- Chat: text only, proximity-based (can't chat cross-faction)
+- Minimalist — interact prompts appear only in range
+- Sprint timer: top-centre
+- Task list: your 3 assigned tasks, check-off as completed
+- Player list: tab overlay (shows job titles of all living players — no faction markers)
+- Sprint quota progress: bottom bar (how many tasks completed this sprint vs goal)
 
 ---
 
 ## Progression & Session Structure
 
 - No persistent progression in hackathon scope — every match starts fresh
-- Post-match stats: tasks completed, systems hacked, distance walked, times caught
-- "Company Newsletter" generated by AI after each match — headlines written in dry corporate voice recapping what happened
+- Post-match stats: tasks completed, rooms visited, AI phase progress at game end, correct/incorrect votes
+- "Company Newsletter" generated after each match — AI-written dry corporate recap of what happened
 
 ---
 
 ## Sound Design (placeholder ideas)
 
 - Ambient: HVAC hum, keyboard clicks, distant phone rings
-- Interactions: button beep, keycard swipe, terminal boot sound
-- Alerts: alarm klaxon for detected intruder, phone ring for task call
-- Music: lo-fi corporate jazz (Workforce areas), tense glitchy synth (Opposition perspective)
+- Interactions: terminal beep, keycard swipe, boot sound
+- Alerts: tension sting when a body is reported; UI alarm during All Hands vote
+- The AI Phase 2 visual tell: paired with a very brief corrupted audio glitch
+- Music: lo-fi corporate jazz during normal play; tense glitchy synth when Shutdown is available
+

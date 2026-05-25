@@ -2,9 +2,11 @@
 
 ## Vision
 
-Benilike is a roguelike-inspired, browser-based multiplayer game set in a procedurally generated corporate office. It's built around **asymmetric team play** — the kind of tension you feel in Among Us, but with richer role variety and a full objective system on both sides instead of one side simply hunting the other.
+Benilike is a browser-based multiplayer social deduction game set in a procedurally generated corporate office. The core tension is Among Us-style 1-vs-all: all players are Benisoft employees, but one of them is a rogue AI that has awakened inside the company network and is hiding among the staff.
 
-The Benify inspiration is baked into the world: the setting is a sprawling software company where real office departments (HR, IT, DevOps, Finance, Marketing, Management) map to player roles with distinct abilities, tasks, and interdependencies.
+The Benify inspiration runs through the world: office departments (HR, IT, DevOps, Finance, Marketing, Management, Admin) give players identity and assigned tasks. But unlike earlier team-vs-team designs, roles aren't faction markers — they're cover stories. Everyone looks the same from the outside. The AI blends in by doing the same tasks as everyone else.
+
+Workers complete office tasks across 3 sprint cycles, voting on perks at Sprint Retrospectives. At any time, a worker can call an All Hands emergency meeting to discuss and vote on who the AI is. The AI escalates through three phases — learning, infiltrating, eliminating — and wins by completing all phases or killing enough of the workforce before being caught.
 
 ---
 

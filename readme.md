@@ -1,21 +1,24 @@
 # Benilike
 
-> A browser-based multiplayer roguelike set inside a procedurally generated corporate office — built during Benify's internal game hackathon.
+> A browser-based multiplayer social deduction game set inside a procedurally generated corporate office — built during Benify's internal game hackathon.
 
 ## Concept
 
-Benilike is a **4–10 player asymmetric multiplayer game** where two factions race to complete their objectives inside an ever-changing office building. One faction plays as **The Workforce** — a team of office employees (HR, IT, DevOps, Finance, Marketing, Admin, Management) who must keep the company running. The other faction plays as **The Opposition** — a rival team of corporate infiltrators and hackers trying to sabotage, steal data, and cause chaos.
+Benilike is a **4–10 player social deduction game** where everyone is a Benisoft employee — except one. A rogue AI has awakened inside the company's network and is hiding among the staff, blending in perfectly. Players must complete office tasks across sprint cycles while trying to identify and eject the AI before it eliminates them one by one.
+
+The AI has three escalating phases: learning the company, gaining system access, and finally terminating the workforce. Workers win by completing all sprint quotas or correctly voting out the AI at an All Hands meeting. The AI wins by eliminating enough workers or completing all its phases undetected.
 
 Every match takes place in a procedurally generated office floor plan, so no two runs are the same.
 
 ## Key Features
 
 - **Procedurally generated office levels** — unique layouts each match
-- **Asymmetric factions** — Workforce vs Opposition, each with unique role kits
-- **Role-based co-op** — players must combine their abilities to succeed
+- **1-vs-all social deduction** — one hidden AI role among all-worker players
+- **Sprint system** — 3 sprints per match, task quotas, Sprint Retrospective perk votes
+- **All Hands meetings** — call emergency votes to eject the AI (limited uses)
+- **AI phase escalation** — the AI grows more dangerous each phase, with visible tells in Phase 2
 - **Browser-based** — no install needed, runs in any modern browser
 - **3D simplistic visuals** — low-poly office aesthetic powered by React Three Fiber
-- **AI-driven** — AI assists procedural generation, NPC behaviour, and difficulty scaling
 
 ## Tech Stack
 
