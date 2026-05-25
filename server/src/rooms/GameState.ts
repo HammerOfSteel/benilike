@@ -10,6 +10,7 @@ export class Player extends Schema {
   @type('float32') z: number          = 0
   @type('float32') facing: number     = 0
   @type('boolean') connected: boolean = true
+  @type('boolean') isBot: boolean     = false
 }
 
 export class GameState extends Schema {
@@ -19,4 +20,5 @@ export class GameState extends Schema {
   @type('string')        mapSeed    = ''
   @type('string')        mapSize    = 'medium'
   @type('string')        winner     = ''          // 'workforce' | 'opposition' | ''
+  @type('float32')       terminalProgress = 50    // 0 = opp wins, 100 = workforce wins
 }

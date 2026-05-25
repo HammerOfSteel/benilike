@@ -27,6 +27,7 @@ export default function NewGameScreen({ onNavigate }: Props) {
   const [mapSize, setMapSize]           = useState<'small' | 'medium' | 'large'>('medium')
   const [factions, setFactions]         = useState<'random' | 'manual' | 'balanced'>('balanced')
   const [maxPlayers, setMaxPlayers]     = useState(6)
+  const [botCount, setBotCount]         = useState(3)
   const [roomCode, setRoomCode]         = useState<string | null>(null)
   const [creating, setCreating]         = useState(false)
   const [error, setError]               = useState('')
@@ -41,8 +42,16 @@ export default function NewGameScreen({ onNavigate }: Props) {
         mapSize,
         maxPlayers,
         factionAssignment: factions,
+        botCount,
       })
       setRoom(room)
+      // Register handlers NOW — before LobbyScreen mounts — so no messages are missed
+      room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
+        useGameRoom.getState().setRole(data.role as any, data.faction as any)
+      })
+      room.onMessage('game_end', (data: { winner: string; reason: string }) => {
+        useGameRoom.getState().setGameEnd(data.winner, data.reason)
+      })
       setRoomCode(room.id.slice(0, 8).toUpperCase())
       setTimeout(() => onNavigate('lobby'), 1800)
     } catch {
@@ -122,6 +131,30 @@ export default function NewGameScreen({ onNavigate }: Props) {
           <div className={styles.playerPips}>
             {Array.from({ length: 10 }, (_, i) => (
               <span key={i} className={`${styles.pip} ${i < maxPlayers ? styles.pipFilled : ''}`} />
+            ))}
+          </div>
+        </div>
+
+        {/* Bot players */}
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel}>BOT PLAYERS — <span className={styles.playerCount}>{botCount}</span></label>
+          <div className={styles.inputRow}>
+            <button className={styles.ghostBtn} onClick={() => setBotCount(c => Math.max(0, c - 1))}>−</button>
+            <div className={styles.sliderRow} style={{ flex: 1 }}>
+              <span className={styles.sliderCap}>0</span>
+              <input
+                type="range" min={0} max={9} step={1}
+                value={botCount}
+                onChange={e => setBotCount(+e.target.value)}
+                className={styles.slider}
+              />
+              <span className={styles.sliderCap}>9</span>
+            </div>
+            <button className={styles.ghostBtn} onClick={() => setBotCount(c => Math.min(9, c + 1))}>+</button>
+          </div>
+          <div className={styles.playerPips}>
+            {Array.from({ length: 9 }, (_, i) => (
+              <span key={i} className={`${styles.pip} ${i < botCount ? styles.pipFilled : ''}`} style={{ background: i < botCount ? 'var(--brand-orange)' : undefined }} />
             ))}
           </div>
         </div>

@@ -33,7 +33,7 @@
 
 - [ ] All Workforce roles implemented (IT, HR, DevOps, Finance, Marketing, Admin, Management)
 - [ ] All Opposition roles implemented (Hacker, Social Engineer, Spy, Saboteur, Insider)
-- [ ] Role selection screen
+- [ ] Role random assignments
 - [ ] Role abilities + cooldowns
 - [ ] Inter-role dependencies (e.g. Finance must approve before Marketing can run campaign)
 - [ ] Faction win conditions balanced

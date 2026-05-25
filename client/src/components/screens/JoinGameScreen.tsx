@@ -59,6 +59,12 @@ export default function JoinGameScreen({ onNavigate }: Props) {
     try {
       const room = await colyseusClient.joinById(cleaned)
       setRoom(room)
+      room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
+        useGameRoom.getState().setRole(data.role as any, data.faction as any)
+      })
+      room.onMessage('game_end', (data: { winner: string; reason: string }) => {
+        useGameRoom.getState().setGameEnd(data.winner, data.reason)
+      })
       onNavigate('lobby')
     } catch {
       setError('Room not found, full, or server offline.')

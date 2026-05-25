@@ -1027,3 +1027,206 @@
   .roomListHeader span:nth-child(3),
   .roomRow span:nth-child(3) { display: none; }
 }
+
+/* ── Game HUD ── */
+.gameHud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.gameHud > * { pointer-events: all; }
+
+.hudCornerTL {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  min-width: 140px;
+}
+
+.hudCornerTR {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  text-align: right;
+}
+
+.hudCornerBL {
+  position: absolute;
+  bottom: 1.25rem;
+  left: 1.25rem;
+}
+
+.hudCenter {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.hudPhase {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--color-terminal);
+  letter-spacing: 0.1em;
+  animation: blink 1.2s step-end infinite;
+}
+
+/* Task bar — bottom centre */
+.hudTaskBar {
+  position: absolute;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 260px;
+}
+
+.hudTaskLabel {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.hudProgressTrack {
+  position: relative;
+  width: 260px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  overflow: visible;
+}
+
+.hudProgressFill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.2s ease;
+}
+
+.hudProgressMarker {
+  position: absolute;
+  top: -3px;
+  width: 4px;
+  height: 16px;
+  background: #fff;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  transition: left 0.2s ease;
+}
+
+.hudProgressPct {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* Interact prompt — centre screen */
+.hudPrompt {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: var(--color-terminal);
+  background: rgba(10, 10, 20, 0.75);
+  border: 1px solid var(--color-terminal);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1.2rem;
+  animation: glow-pulse 1.5s ease-in-out infinite;
+}
+
+/* ── Win / Lose end-game overlay ─────────────────────────────────────── */
+.endOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 5, 14, 0.88);
+  backdrop-filter: blur(6px);
+}
+
+.endCard {
+  background: var(--surface-2);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem 3rem;
+  max-width: 480px;
+  width: 92%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  box-shadow: 0 0 60px rgba(109,40,217,0.3);
+}
+
+.endFactionWon {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--color-terminal);
+}
+
+.endFactionLost {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: var(--brand-orange);
+}
+
+.endHeadline {
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.1;
+}
+
+.endReason {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0.25rem 0 0.75rem;
+}
+
+.endStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+  width: 100%;
+  padding: 1rem 0;
+  border-top: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.endStat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}

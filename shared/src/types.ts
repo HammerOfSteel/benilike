@@ -17,6 +17,7 @@ export interface RoomOptions {
   mapSize:           'small' | 'medium' | 'large'
   maxPlayers:        number
   factionAssignment: 'random' | 'manual' | 'balanced'
+  botCount:          number
 }
 
 // ── Client → Server messages ──────────────────────────────────────────────────

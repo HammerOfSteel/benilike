@@ -24,7 +24,13 @@ export default function LobbyScreen({ onNavigate }: Props) {
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
           sessionId: p.sessionId,
           name:      p.name,
+          x:         p.x      ?? 0,
+          z:         p.z      ?? 0,
+          facing:    p.facing ?? 0,
+          faction:   p.faction ?? '',
+          role:      p.role   ?? '',
           connected: p.connected,
+          isBot:     p.isBot  ?? false,
         }))
       )
     })
@@ -40,6 +46,10 @@ export default function LobbyScreen({ onNavigate }: Props) {
 
     room.onMessage('game_end', () => {
       onNavigate('main-menu')
+    })
+
+    room.onMessage('game_start', () => {
+      onNavigate('game')
     })
 
     return () => { room.removeAllListeners() }
@@ -61,6 +71,11 @@ export default function LobbyScreen({ onNavigate }: Props) {
     room?.leave()
     clearRoom()
     onNavigate('main-menu')
+  }
+
+  const handleStart = () => {
+    if (!room) return
+    room.send('start_game', {})
   }
 
   const roomCode = room?.id?.slice(0, 8).toUpperCase() ?? '---'
@@ -135,10 +150,10 @@ export default function LobbyScreen({ onNavigate }: Props) {
           <button
             className={styles.primaryBtn}
             style={{ width: 'auto', padding: '0.65rem 2rem' }}
-            disabled={players.length < 2}
-            title={players.length < 2 ? 'Need at least 2 players' : ''}
+            onClick={handleStart}
+            disabled={!room}
           >
-            {players.length < 2 ? '[ WAITING… ]' : '[ START GAME ]'}
+            [ START GAME ]
           </button>
         </div>
 

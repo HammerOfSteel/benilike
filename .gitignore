@@ -42,3 +42,4 @@ yarn.lock
 assets_from_itch/
 *.zip
 *.unitypackage
+.vercel
