@@ -31,6 +31,7 @@ export default function GameScreen({ onNavigate }: Props) {
   } = useGameRoom()
 
   const [nearStation, setNearStation] = useState<StationInfo | null>(null)
+  const [currentZone,  setCurrentZone]  = useState<string | null>(null)
   const toastRaf = useRef<number>(0)
 
   const handleLeave = () => {
@@ -41,6 +42,7 @@ export default function GameScreen({ onNavigate }: Props) {
   }
 
   const handleNearStation = useCallback((st: StationInfo | null) => setNearStation(st), [])
+  const handleZoneChange  = useCallback((z: string | null) => setCurrentZone(z), [])
 
   // Clear expired toasts
   useEffect(() => {
@@ -101,7 +103,7 @@ export default function GameScreen({ onNavigate }: Props) {
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <GameWorld onNearStation={handleNearStation} gameOver={false} />
+      <GameWorld onNearStation={handleNearStation} onZoneChange={handleZoneChange} gameOver={false} />
 
       {/* ── Team meters (bottom centre) ── */}
       <div className={styles.hudMeters}>
@@ -158,6 +160,22 @@ export default function GameScreen({ onNavigate }: Props) {
       {nearStation && !holdingStationId && taskDef && !completedTasks.has(nearStation.taskId as any) && (
         <div className={styles.hudInteract}>[E] {taskDef.name}</div>
       )}
+
+      {/* ── Zone / light-switch HUD (top centre) ── */}
+      <div style={{
+        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, pointerEvents: 'none',
+      }}>
+        {currentZone && (
+          <div style={{
+            background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: 6, padding: '4px 14px', fontSize: 11, letterSpacing: 2,
+            color: '#c8c0ff', textTransform: 'uppercase', fontFamily: 'monospace',
+          }}>
+            {ZONE_LABELS[currentZone] ?? currentZone}
+          </div>
+        )}
+      </div>
 
       {/* ── Task completion toasts ── */}
       <div className={styles.hudToasts}>

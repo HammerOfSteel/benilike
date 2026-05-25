@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
@@ -62,26 +62,36 @@ function GridLayer({
     <group>
       <instancedMesh ref={wallRef} args={[undefined, undefined, wallMats.length]} castShadow receiveShadow>
         <boxGeometry args={[CELL_SIZE, WALL_HEIGHT, CELL_SIZE]} />
-        <meshStandardMaterial color="#2a2840" />
+        <meshStandardMaterial color="#5c4f8a" roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={floorRef} args={[undefined, undefined, floorMats.length]} receiveShadow>
         <boxGeometry args={[CELL_SIZE, 0.12, CELL_SIZE]} />
-        <meshStandardMaterial color="#111120" />
+        <meshStandardMaterial color="#1c1b2e" roughness={0.85} />
       </instancedMesh>
     </group>
   )
 }
 
-// ── Zone accent overlays (coloured floor patches for each room) ───────────────
+// ── Zone accent overlays ──────────────────────────────────────────────────────
 const ZONE_COLORS: Record<string, string> = {
-  main_office:    '#1e1b4b',
-  server_room:    '#0f172a',
-  network_closet: '#0c1a2e',
-  hr_corner:      '#1a0f2e',
-  devops_den:     '#0f2e1a',
-  finance_floor:  '#2e1a0f',
-  marketing_hub:  '#2e0f1a',
-  exec_suite:     '#1a1a2e',
+  main_office:    '#2d2a6e',
+  server_room:    '#1a2f4a',
+  network_closet: '#152640',
+  hr_corner:      '#3a1a52',
+  devops_den:     '#1a4228',
+  finance_floor:  '#4a2a0f',
+  marketing_hub:  '#4a0f28',
+  exec_suite:     '#1a2a4e',
+}
+const ZONE_LIGHT_COLORS: Record<string, string> = {
+  main_office:    '#c8c0ff',
+  server_room:    '#80d4ff',
+  network_closet: '#80c8ff',
+  hr_corner:      '#e0b0ff',
+  devops_den:     '#90ffb0',
+  finance_floor:  '#ffd090',
+  marketing_hub:  '#ff90b0',
+  exec_suite:     '#a0c0ff',
 }
 
 function ZoneOverlays({ mapData, floor }: { mapData: MapData; floor: number }) {
@@ -95,9 +105,95 @@ function ZoneOverlays({ mapData, floor }: { mapData: MapData; floor: number }) {
         const cz = (room.wz1 + room.wz2) / 2
         return (
           <mesh key={i} position={[cx, floorY + 0.07, cz]} receiveShadow>
-            <boxGeometry args={[w, 0.02, d]} />
-            <meshStandardMaterial color={ZONE_COLORS[room.zone ?? ''] ?? '#1a1a2e'} />
+            <boxGeometry args={[w, 0.025, d]} />
+            <meshStandardMaterial color={ZONE_COLORS[room.zone ?? ''] ?? '#2a2a4e'} roughness={0.9} />
           </mesh>
+        )
+      })}
+    </>
+  )
+}
+
+// ── Room ceiling lights (togglable) ──────────────────────────────────────────
+export interface RoomLightsState { [zone: string]: boolean }
+
+function RoomCeilingLights({ mapData, floor, lights }: {
+  mapData: MapData; floor: number; lights: RoomLightsState
+}) {
+  const floorY   = floor * FLOOR_HEIGHT
+  const ceilY    = floorY + WALL_HEIGHT
+  return (
+    <>
+      {mapData.rooms.filter(r => r.floor === floor).map((room, i) => {
+        const isOn   = lights[room.zone ?? ''] !== false  // default on
+        const lcolor = ZONE_LIGHT_COLORS[room.zone ?? ''] ?? '#e8e0ff'
+        const pw     = Math.min(room.wx2 - room.wx1 - 1, 6)
+        const pd     = Math.min(room.wz2 - room.wz1 - 1, 6)
+        return (
+          <group key={i} position={[room.wcx, ceilY, room.wcz]}>
+            {/* Ceiling panel */}
+            <mesh>
+              <boxGeometry args={[pw, 0.1, pd]} />
+              <meshStandardMaterial
+                color={isOn ? lcolor : '#1a1a28'}
+                emissive={isOn ? lcolor : '#000'}
+                emissiveIntensity={isOn ? 0.9 : 0}
+              />
+            </mesh>
+            {/* Light cone downward */}
+            {isOn && (
+              <pointLight
+                position={[0, -0.5, 0]}
+                intensity={2.5}
+                distance={18}
+                decay={2}
+                color={lcolor}
+                castShadow={false}
+              />
+            )}
+          </group>
+        )
+      })}
+    </>
+  )
+}
+
+// ── Light switch ──────────────────────────────────────────────────────────────
+export interface SwitchPos { zone: string; floor: number; x: number; z: number }
+
+function LightSwitches({ mapData, floor, lights, nearZone }: {
+  mapData: MapData; floor: number; lights: RoomLightsState; nearZone: string | null
+}) {
+  const floorY = floor * FLOOR_HEIGHT
+  return (
+    <>
+      {mapData.rooms.filter(r => r.floor === floor).map((room, i) => {
+        const isOn   = lights[room.zone ?? ''] !== false
+        const isNear = nearZone === room.zone
+        return (
+          <group key={i} position={[room.wx1 + CELL_SIZE, floorY + 1.1, room.wz1 + CELL_SIZE * 0.5]}>
+            {/* Wall-mounted box */}
+            <mesh castShadow>
+              <boxGeometry args={[0.22, 0.35, 0.12]} />
+              <meshStandardMaterial color={isOn ? '#e8d84a' : '#2a2840'} />
+            </mesh>
+            {/* Indicator dot */}
+            <mesh position={[0, 0.06, 0.07]}>
+              <sphereGeometry args={[0.06, 8, 8]} />
+              <meshStandardMaterial
+                color={isOn ? '#ffe040' : '#443a6a'}
+                emissive={isOn ? '#ffe040' : '#000'}
+                emissiveIntensity={isOn ? 1.5 : 0}
+              />
+            </mesh>
+            {/* Highlight ring when near */}
+            {isNear && (
+              <mesh position={[0, 0, 0.1]} rotation={[0, 0, 0]}>
+                <ringGeometry args={[0.22, 0.3, 16]} />
+                <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={2} transparent opacity={0.7} />
+              </mesh>
+            )}
+          </group>
         )
       })}
     </>
@@ -250,16 +346,22 @@ function FollowCamera({ currentFloor: _cf }: { currentFloor: number }) {
 
 // ── Local Player Controller ───────────────────────────────────────────────────
 function LocalPlayerController({
-  faction, mapData, onNearStation,
+  faction, mapData, switchPositions, onNearStation, onNearSwitch, onZoneChange,
 }: {
   faction: string
   mapData: MapData | null
+  switchPositions: SwitchPos[]
   onNearStation: (st: StationInfo | null) => void
+  onNearSwitch:  (zone: string | null) => void
+  onZoneChange:  (zone: string | null) => void
 }) {
-  const keys     = useKeyboard()
-  const facingRef = useRef(0)
-  const lastSent = useRef(0)
-  const groupRef = useRef<THREE.Group>(null)
+  const keys      = useKeyboard()
+  const facingRef  = useRef(0)
+  const lastSent   = useRef(0)
+  const lastToggle = useRef(0); void lastToggle
+  const groupRef  = useRef<THREE.Group>(null)
+  const prevZone  = useRef<string | null>(null)
+  const prevSwitch = useRef<string | null>(null)
 
   useFrame((_, delta) => {
     const k   = keys.current
@@ -283,7 +385,7 @@ function LocalPlayerController({
         else if (isWalkable(nx, localPos.z, localFloor, grids, gw, gh))    { localPos.x = nx }
         else if (isWalkable(localPos.x, nz, localFloor, grids, gw, gh))    { localPos.z = nz }
       } else {
-        localPos.x = nx; localPos.z = nz  // fallback (no collision)
+        localPos.x = nx; localPos.z = nz
       }
       facingRef.current = Math.atan2(dx, dz)
     }
@@ -307,7 +409,15 @@ function LocalPlayerController({
       }
     }
 
-    // Station proximity (same floor only)
+    // Current zone (which room are we inside?)
+    const zone = mapData?.rooms.find(r =>
+      r.floor === localFloor &&
+      localPos.x >= r.wx1 && localPos.x <= r.wx2 &&
+      localPos.z >= r.wz1 && localPos.z <= r.wz2
+    )?.zone ?? null
+    if (zone !== prevZone.current) { prevZone.current = zone; onZoneChange(zone) }
+
+    // Station proximity
     const gs = useGameRoom.getState()
     const nearStation = gs.stations.find(st => {
       if ((st.floor ?? 0) !== localFloor) return false
@@ -317,10 +427,18 @@ function LocalPlayerController({
     }) ?? null
     onNearStation(nearStation)
 
-    // Hold-E interaction
-    const wantsHold  = nearStation && !!k['KeyE']
-    const currentHold = gs.holdingStationId
+    // Light-switch proximity (only on same floor, only when not near a station)
+    const sw = !nearStation ? switchPositions.find(s => {
+      if (s.floor !== localFloor) return false
+      const sx = localPos.x - s.x, sz = localPos.z - s.z
+      return Math.sqrt(sx * sx + sz * sz) < 2.5
+    }) ?? null : null
+    const swZone = sw?.zone ?? null
+    if (swZone !== prevSwitch.current) { prevSwitch.current = swZone; onNearSwitch(swZone) }
 
+    // Hold-E for workstation
+    const wantsHold   = nearStation && !!k['KeyE']
+    const currentHold = gs.holdingStationId
     if (wantsHold && nearStation) {
       const td = TASK_DEFS.find(t => t.id === nearStation.taskId && t.role === gs.myRole)
       if (td && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
@@ -345,6 +463,7 @@ function LocalPlayerController({
   const color = faction === 'opposition' ? '#ef4444' : '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
+      {/* Player body */}
       <mesh position={[0, 0.85, 0]} castShadow>
         <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
         <meshStandardMaterial color={color} />
@@ -357,41 +476,71 @@ function LocalPlayerController({
         <sphereGeometry args={[0.07, 6, 6]} />
         <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
       </mesh>
+      {/* Local player follow light */}
+      <pointLight position={[0, 2.2, 0]} intensity={1.8} distance={10} decay={2} color="#fff5e0" />
     </group>
   )
 }
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function Scene({
-  onNearStation, gameOver,
+  onNearStation, onZoneChange, gameOver,
 }: {
   onNearStation: (st: StationInfo | null) => void
+  onZoneChange:  (zone: string | null) => void
   gameOver:      boolean
 }) {
   const { players, myFaction, room, stations, completedTasks, holdingStationId } = useGameRoom()
   const mapSeed = useGameRoom(s => s.mapSeed)
   const mapSize = useGameRoom(s => s.mapSize)
   const myRole  = useGameRoom(s => s.myRole)
-  const [renderFloor, setRenderFloor] = useState(0)
+  const [renderFloor,  setRenderFloor]  = useState(0)
+  const [roomLights,   setRoomLights]   = useState<RoomLightsState>({})
+  const [nearSwitch,   setNearSwitch]   = useState<string | null>(null)
+  const lastToggleRef = useRef(0)
 
-  // Regenerate map from seed (same algorithm as server)
+  // Regenerate map from seed
   const mapData = useMemo<MapData | null>(() => {
     if (!mapSeed) return null
     const md = generateMapData(mapSeed, mapSize)
-    // Reset player to start position when map changes
     localPos.set(md.startX, 0, md.startZ)
     localFloor = 0
     return md
   }, [mapSeed, mapSize])
 
-  // Track local floor for rendering (in render loop)
+  // Default all room lights to ON when map changes
+  useEffect(() => {
+    if (!mapData) return
+    const defaults: RoomLightsState = {}
+    for (const r of mapData.rooms) defaults[r.zone ?? ''] = true
+    setRoomLights(defaults)
+  }, [mapData])
+
+  // Switch positions: just inside the top-left corner of each room
+  const switchPositions = useMemo<SwitchPos[]>(() =>
+    mapData ? mapData.rooms.map(r => ({
+      zone:  r.zone ?? '',
+      floor: r.floor,
+      x:     r.wx1 + CELL_SIZE,
+      z:     r.wz1 + CELL_SIZE * 0.5,
+    })) : []
+  , [mapData])
+
+  // Light switch handler (debounced, called by LocalPlayerController proximity)
+  const handleSwitchToggle = useCallback((zone: string) => {
+    const now = Date.now()
+    if (now - lastToggleRef.current < 400) return
+    lastToggleRef.current = now
+    setRoomLights(prev => ({ ...prev, [zone]: !prev[zone] }))
+  }, [])
+
+  // Track local floor for rendering
   useFrame(() => {
     if (renderFloor !== localFloor) setRenderFloor(localFloor)
   })
 
   useEffect(() => {
     if (!room) return
-
     room.onStateChange((state: any) => {
       const gs = useGameRoom.getState()
       gs.setPlayers(
@@ -409,11 +558,8 @@ function Scene({
           gs.setActiveEffects({ ...curr, lockdownActive: !!state.lockdownActive })
       }
     })
-
-    room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
-      useGameRoom.getState().setStations(data.stations)
-    })
-    room.onMessage('task_complete', (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
+    room.onMessage('station_list',     (data: { stations: StationInfo[] }) => useGameRoom.getState().setStations(data.stations))
+    room.onMessage('task_complete',    (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
       const gs = useGameRoom.getState()
       gs.completeTask(data.taskId)
       gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
@@ -424,21 +570,33 @@ function Scene({
     room.onMessage('effect_update',    (d: any) => useGameRoom.getState().setActiveEffects(d))
     room.onMessage('game_end',         (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
     room.onMessage('incident',         (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
-
     return () => {}
   }, [room])
+
+  // Light switch press handling (E key while near a switch, not near a station)
+  const keysRef = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { keysRef.current[e.code] = true }
+    const up   = (e: KeyboardEvent) => { keysRef.current[e.code] = false }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
+  useFrame(() => {
+    if (nearSwitch && keysRef.current['KeyF']) handleSwitchToggle(nearSwitch)
+  })
 
   const mySessionId = room?.sessionId
   const floorY      = renderFloor * FLOOR_HEIGHT
 
   return (
     <>
-      <ambientLight intensity={0.25} color="#7070aa" />
-      <directionalLight position={[20, 30, 20]} intensity={0.8} castShadow shadow-mapSize={[1024, 1024]} />
+      <ambientLight intensity={0.45} color="#8080cc" />
+      <directionalLight position={[20, 30, 20]} intensity={0.6} castShadow={false} />
 
       <FollowCamera currentFloor={renderFloor} />
 
-      {/* Grid geometry — only current floor */}
+      {/* Grid + lights */}
       {mapData && (
         <group key={`floor-${renderFloor}`}>
           <GridLayer
@@ -447,13 +605,15 @@ function Scene({
             gridH={mapData.gridH}
             floorY={floorY}
           />
-          <ZoneOverlays   mapData={mapData} floor={renderFloor} />
+          <ZoneOverlays     mapData={mapData} floor={renderFloor} />
+          <RoomCeilingLights mapData={mapData} floor={renderFloor} lights={roomLights} />
+          <LightSwitches    mapData={mapData} floor={renderFloor} lights={roomLights} nearZone={nearSwitch} />
           <StaircaseVisuals mapData={mapData} floor={renderFloor} />
-          <RoomSigns      mapData={mapData} floor={renderFloor} />
+          <RoomSigns        mapData={mapData} floor={renderFloor} />
         </group>
       )}
 
-      {/* Workstations — current floor only */}
+      {/* Workstations */}
       {stations.filter(st => (st.floor ?? 0) === renderFloor).map(st => {
         const hasMyTask  = !!myRole && !!st.taskId && TASK_DEFS.some(t => t.id === st.taskId && t.role === myRole)
         const isHolding  = holdingStationId === st.stationId
@@ -477,7 +637,10 @@ function Scene({
         <LocalPlayerController
           faction={myFaction ?? 'workforce'}
           mapData={mapData}
+          switchPositions={switchPositions}
           onNearStation={onNearStation}
+          onNearSwitch={setNearSwitch}
+          onZoneChange={onZoneChange}
         />
       )}
     </>
@@ -487,17 +650,18 @@ function Scene({
 // ── GameWorld (exported) ──────────────────────────────────────────────────────
 export interface GameWorldProps {
   onNearStation: (st: StationInfo | null) => void
+  onZoneChange?: (zone: string | null) => void
   gameOver?:     boolean
 }
 
-export default function GameWorld({ onNearStation, gameOver = false }: GameWorldProps) {
+export default function GameWorld({ onNearStation, onZoneChange, gameOver = false }: GameWorldProps) {
   return (
     <Canvas
       shadows
       camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
       style={{ position: 'fixed', inset: 0, zIndex: 0 }}
     >
-      <Scene onNearStation={onNearStation} gameOver={gameOver} />
+      <Scene onNearStation={onNearStation} onZoneChange={onZoneChange ?? (() => {})} gameOver={gameOver} />
     </Canvas>
   )
 }
