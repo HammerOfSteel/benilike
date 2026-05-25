@@ -8,9 +8,10 @@ import NewGameScreen from './components/screens/NewGameScreen'
 import JoinGameScreen from './components/screens/JoinGameScreen'
 import LobbyScreen from './components/screens/LobbyScreen'
 import GameScreen from './components/screens/GameScreen'
+import BriefingScreen from './components/screens/BriefingScreen'
 import { useTheme } from './store/useTheme'
 
-export type Screen = 'main-menu' | 'new-game' | 'join-game' | 'lobby' | 'game' | 'settings' | 'how-to-play' | 'credits'
+export type Screen = 'main-menu' | 'new-game' | 'join-game' | 'lobby' | 'briefing' | 'game' | 'settings' | 'how-to-play' | 'credits'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('main-menu')
@@ -18,7 +19,7 @@ export default function App() {
 
   return (
     <div data-theme={theme} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* 3D background — only on menus */}
+      {/* 3D background — only on menus/briefing (not in-game) */}
       {screen !== 'game' && <OfficeScene />}
 
       {/* UI overlay */}
@@ -29,6 +30,7 @@ export default function App() {
       {screen === 'new-game'    && <NewGameScreen onNavigate={setScreen} />}
       {screen === 'join-game'   && <JoinGameScreen onNavigate={setScreen} />}
       {screen === 'lobby'       && <LobbyScreen onNavigate={setScreen} />}
+      {screen === 'briefing'    && <BriefingScreen onNavigate={setScreen} />}
       {screen === 'game'        && <GameScreen onNavigate={setScreen} />}
     </div>
   )

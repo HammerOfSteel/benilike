@@ -49,7 +49,7 @@ export default function LobbyScreen({ onNavigate }: Props) {
     })
 
     room.onMessage('game_start', () => {
-      onNavigate('game')
+      onNavigate('briefing')
     })
 
     return () => { room.removeAllListeners() }

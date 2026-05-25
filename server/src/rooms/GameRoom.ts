@@ -40,6 +40,8 @@ export class GameRoom extends Room<GameState> {
     insiderUsed:     new Set(),
   }
 
+  private botAI = new Map<string, { mode: 'wander' | 'work'; workUntil: number }>()
+
   onCreate(options: Partial<RoomOptions>) {
     this.setState(new GameState())
     this.state.mapSize  = options.mapSize ?? 'medium'
@@ -319,11 +321,60 @@ export class GameRoom extends Room<GameState> {
     }
 
     const interval = this.clock.setInterval(() => {
+      if (this.state.phase !== 'playing') {
+        // Before/after game — just wander
+        this.state.players.forEach((p) => {
+          if (!p.isBot) return
+          p.x      = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 3))
+          p.z      = Math.max(-15.5, Math.min(9.0,  p.z + (Math.random() - 0.5) * 3))
+          p.facing = Math.random() * Math.PI * 2
+        })
+        return
+      }
+
+      const TERM_X = 0, TERM_Z = -11.5, INTERACT_R = 2.0
+      const now = this.clock.currentTime
+
       this.state.players.forEach((p) => {
         if (!p.isBot) return
-        p.x      = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 3))
-        p.z      = Math.max(-15.5, Math.min(9.0,  p.z + (Math.random() - 0.5) * 3))
-        p.facing = Math.random() * Math.PI * 2
+
+        let ai = this.botAI.get(p.sessionId) ?? { mode: 'wander' as const, workUntil: 0 }
+        const dx = TERM_X - p.x
+        const dz = TERM_Z - p.z
+        const dist = Math.sqrt(dx * dx + dz * dz)
+
+        if (ai.mode === 'work') {
+          if (now > ai.workUntil) {
+            // Done — stop working and wander away
+            ai.mode = 'wander'
+            this.taskUsers.delete(p.sessionId)
+            p.x = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 5))
+            p.z = Math.max(-8.0,  Math.min(9.0,  p.z + 3 + Math.random() * 3))
+            p.facing = Math.random() * Math.PI * 2
+          } else if (dist > INTERACT_R) {
+            // Approaching terminal
+            const speed = 2.5
+            p.x = Math.max(-11.5, Math.min(11.5, p.x + (dx / dist) * speed))
+            p.z = Math.max(-15.5, Math.min(9.0,  p.z + (dz / dist) * speed))
+            p.facing = Math.atan2(dx, dz)
+          } else {
+            // At terminal — register as task user
+            this.taskUsers.add(p.sessionId)
+            p.facing = Math.atan2(-p.x, TERM_Z - p.z)
+          }
+        } else {
+          // Wander — 25% chance each tick to start working
+          if (Math.random() < 0.25) {
+            ai.mode = 'work'
+            ai.workUntil = now + 5_000 + Math.random() * 10_000
+          } else {
+            p.x      = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 3))
+            p.z      = Math.max(-15.5, Math.min(9.0,  p.z + (Math.random() - 0.5) * 3))
+            p.facing = Math.random() * Math.PI * 2
+          }
+        }
+
+        this.botAI.set(p.sessionId, ai)
       })
     }, 2000)
 
