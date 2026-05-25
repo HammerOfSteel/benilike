@@ -159,7 +159,6 @@ export default function JoinGameScreen({ onNavigate }: Props) {
                 >
                   👁
                 </button>
-                )}
               </span>
             </div>
           ))}

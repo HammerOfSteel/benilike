@@ -4,6 +4,7 @@ import {
   WORKFORCE_ROLES,
   type AiPhase,
   type PlayerRole,
+  type WorkforceRole,
   type RoomOptions,
   type TaskId,
   type StationInfo,
