@@ -88,18 +88,22 @@ const DEBUG_INIT_SCRIPT = `
     { name: 'GameEndCard', sel: '[class*="endCard"]' },
   ]
   let lastScreen = ''
-  const obs = new MutationObserver(() => {
-    for (const { name, sel } of SCREENS) {
-      if (document.querySelector(sel)) {
-        if (lastScreen !== name) {
-          lastScreen = name
-          console.debug('[SCREEN] → ' + name + '  @' + performance.now().toFixed(0) + 'ms')
+  const setupObs = () => {
+    const obs = new MutationObserver(() => {
+      for (const { name, sel } of SCREENS) {
+        if (document.querySelector(sel)) {
+          if (lastScreen !== name) {
+            lastScreen = name
+            console.debug('[SCREEN] \u2192 ' + name + '  @' + performance.now().toFixed(0) + 'ms')
+          }
+          return
         }
-        return
       }
-    }
-  })
-  obs.observe(document.body, { childList: true, subtree: true })
+    })
+    obs.observe(document.body, { childList: true, subtree: true })
+  }
+  if (document.body) { setupObs() }
+  else { document.addEventListener('DOMContentLoaded', setupObs) }
 })()
 `
 
