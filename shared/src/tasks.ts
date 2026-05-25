@@ -1,175 +1,159 @@
-import type { TaskDef, ZoneId, StationInfo } from './types'
+import type { TaskDef, TaskId, WorkforceRole, ZoneId, StationInfo } from './types'
 import { generateMapData } from './mapgen'
-import type { MapData } from './mapgen'
 
 // ── Zone definitions ──────────────────────────────────────────────────────────
 
 export interface ZoneDef {
-  id:          ZoneId
-  displayName: string
-  stations:    Array<{ x: number; z: number }>
-  mapSizes:    Array<'small' | 'medium' | 'large'>
+  id:    ZoneId
+  label: string
+  color: string
 }
 
 export const ZONES: ZoneDef[] = [
-  {
-    id: 'main_office', displayName: 'Main Office',
-    stations: [
-      { x: -6, z: -4 }, { x: -2, z: -4 }, { x: 2, z: -4 }, { x: 6, z: -4 },
-      { x: -6, z:  0 }, { x: -2, z:  0 }, { x: 2, z:  0 }, { x: 6, z:  0 },
-    ],
-    mapSizes: ['small', 'medium', 'large'],
-  },
-  {
-    id: 'server_room', displayName: 'Server Room',
-    stations: [
-      { x:  0, z: -11.5 },
-      { x: -5, z: -14   },
-      { x:  5, z: -14   },
-    ],
-    mapSizes: ['small', 'medium', 'large'],
-  },
-  {
-    id: 'network_closet', displayName: 'Network Closet',
-    stations: [
-      { x: -10, z: -2 },
-      { x: -10, z: -4 },
-    ],
-    mapSizes: ['small', 'medium', 'large'],
-  },
-  {
-    id: 'hr_corner', displayName: 'HR Corner',
-    stations: [
-      { x: -7, z: 3 }, { x: -5, z: 3 }, { x: -6, z: 5 },
-    ],
-    mapSizes: ['medium', 'large'],
-  },
-  {
-    id: 'finance_floor', displayName: 'Finance Floor',
-    stations: [
-      { x: 5, z: 3 }, { x: 7, z: 3 }, { x: 6, z: 5 },
-    ],
-    mapSizes: ['medium', 'large'],
-  },
-  {
-    id: 'devops_den', displayName: 'DevOps Den',
-    stations: [
-      { x: -2, z: -5 }, { x: 0, z: -5 }, { x: 2, z: -5 },
-    ],
-    mapSizes: ['medium', 'large'],
-  },
-  {
-    id: 'marketing_hub', displayName: 'Marketing Hub',
-    stations: [
-      { x: -7, z: -3 }, { x: -5, z: -3 }, { x: -6, z: -5 },
-    ],
-    mapSizes: ['large'],
-  },
-  {
-    id: 'exec_suite', displayName: 'Exec Suite',
-    stations: [
-      { x: 5, z: -3 }, { x: 7, z: -3 }, { x: 6, z: -5 },
-    ],
-    mapSizes: ['large'],
-  },
+  { id: 'main_office',    label: 'Main Office',     color: '#3b82f6' },
+  { id: 'server_room',    label: 'Server Room',      color: '#10b981' },
+  { id: 'network_closet', label: 'Network Closet',   color: '#6366f1' },
+  { id: 'hr_corner',      label: 'HR Corner',        color: '#f59e0b' },
+  { id: 'finance_floor',  label: 'Finance Floor',    color: '#8b5cf6' },
+  { id: 'devops_den',     label: 'DevOps Den',       color: '#06b6d4' },
+  { id: 'marketing_hub',  label: 'Marketing Hub',    color: '#ec4899' },
+  { id: 'exec_suite',     label: 'Executive Suite',  color: '#ef4444' },
 ]
 
-// ── Task definitions ──────────────────────────────────────────────────────────
+// ── Workforce tasks (any player can receive and complete these) ───────────────
 
 export const TASK_DEFS: TaskDef[] = [
   // IT
-  { id: 'it_repair_terminal',       role: 'it',              name: 'Repair Terminal',       zone: 'server_room',    holdMs: 5000, meterGain: 14, effectDesc: 'Removes hacker corruption' },
-  { id: 'it_fix_server',            role: 'it',              name: 'Fix Server Rack',        zone: 'server_room',    holdMs: 5000, meterGain: 14, effectDesc: 'Pauses rack degradation 3 min' },
-  // DevOps
-  { id: 'devops_ci_pipeline',       role: 'devops',          name: 'CI Pipeline',            zone: 'devops_den',     holdMs: 4000, meterGain: 14, effectDesc: 'IT task speed ×2 for 90s' },
-  { id: 'devops_system_monitor',    role: 'devops',          name: 'System Monitor',         zone: 'devops_den',     holdMs: 4000, meterGain: 14, effectDesc: 'Admin gets server health snapshot' },
+  { id: 'patch_terminal',      name: 'Patch Terminal',         zone: 'server_room',    holdMs: 4000, category: 'workforce', assignedTo: ['it'] },
+  { id: 'restart_rack',        name: 'Restart Server Rack',    zone: 'server_room',    holdMs: 5000, category: 'workforce', assignedTo: ['it'] },
+  { id: 'cable_audit',         name: 'Cable Audit',            zone: 'network_closet', holdMs: 3500, category: 'workforce', assignedTo: ['it'] },
+  { id: 'firewall_check',      name: 'Firewall Check',         zone: 'network_closet', holdMs: 4500, category: 'workforce', assignedTo: ['it'] },
   // HR
-  { id: 'hr_security_vetting',      role: 'hr',              name: 'Security Vetting',       zone: 'hr_corner',      holdMs: 4000, meterGain: 14, effectDesc: 'Opposition task speed ×2 for 90s' },
-  { id: 'hr_policy_update',         role: 'hr',              name: 'Policy Update',          zone: 'hr_corner',      holdMs: 4000, meterGain: 14, effectDesc: 'Opposition task speed ×2 for 90s' },
+  { id: 'security_vetting',    name: 'Security Vetting',       zone: 'hr_corner',      holdMs: 4000, category: 'workforce', assignedTo: ['hr'] },
+  { id: 'policy_review',       name: 'Policy Review',          zone: 'hr_corner',      holdMs: 3500, category: 'workforce', assignedTo: ['hr'] },
+  { id: 'onboarding_docs',     name: 'Onboarding Docs',        zone: 'hr_corner',      holdMs: 3000, category: 'workforce', assignedTo: ['hr', 'admin'] },
+  // DevOps
+  { id: 'ci_pipeline',         name: 'CI Pipeline',            zone: 'devops_den',     holdMs: 5000, category: 'workforce', assignedTo: ['devops'] },
+  { id: 'system_monitor',      name: 'System Monitor',         zone: 'devops_den',     holdMs: 3500, category: 'workforce', assignedTo: ['devops'] },
+  { id: 'deploy_config',       name: 'Deploy Config',          zone: 'devops_den',     holdMs: 4500, category: 'workforce', assignedTo: ['devops'] },
   // Finance
-  { id: 'finance_budget_freeze',    role: 'finance',         name: 'Budget Freeze',          zone: 'finance_floor',  holdMs: 4000, meterGain: 14, effectDesc: 'Opposition meter degrades faster 2 min' },
-  { id: 'finance_audit_trail',      role: 'finance',         name: 'Audit Trail',            zone: 'finance_floor',  holdMs: 4000, meterGain: 0,  effectDesc: '+8% instant meter boost' },
+  { id: 'budget_freeze',       name: 'Budget Freeze',          zone: 'finance_floor',  holdMs: 4000, category: 'workforce', assignedTo: ['finance'] },
+  { id: 'expense_audit',       name: 'Expense Audit',          zone: 'finance_floor',  holdMs: 5000, category: 'workforce', assignedTo: ['finance'] },
+  { id: 'invoice_batch',       name: 'Invoice Batch',          zone: 'finance_floor',  holdMs: 3500, category: 'workforce', assignedTo: ['finance'] },
   // Marketing
-  { id: 'marketing_pr_campaign',    role: 'marketing',       name: 'PR Campaign',            zone: 'marketing_hub',  holdMs: 4000, meterGain: 14, effectDesc: 'Opposition meter gains -25% for 90s' },
-  { id: 'marketing_crisis_control', role: 'marketing',       name: 'Crisis Control',         zone: 'marketing_hub',  holdMs: 4000, meterGain: 14, effectDesc: 'Removes one opposition debuff' },
+  { id: 'pr_campaign',         name: 'PR Campaign',            zone: 'marketing_hub',  holdMs: 4000, category: 'workforce', assignedTo: ['marketing'] },
+  { id: 'social_scheduling',   name: 'Social Scheduling',      zone: 'marketing_hub',  holdMs: 3000, category: 'workforce', assignedTo: ['marketing'] },
+  { id: 'crisis_control',      name: 'Crisis Control',         zone: 'marketing_hub',  holdMs: 5000, category: 'workforce', assignedTo: ['marketing', 'management'] },
   // Admin
-  { id: 'admin_lockdown',           role: 'admin',           name: 'Server Room Lockdown',   zone: 'server_room',    holdMs: 5000, meterGain: 14, effectDesc: 'Blocks opposition from Server Room 90s' },
-  { id: 'admin_keycard_audit',      role: 'admin',           name: 'Keycard Audit',          zone: 'exec_suite',     holdMs: 4000, meterGain: 14, effectDesc: 'Vague intel on last opposition activity' },
+  { id: 'keycard_audit',       name: 'Keycard Audit',          zone: 'main_office',    holdMs: 3500, category: 'workforce', assignedTo: ['admin'] },
+  { id: 'meeting_setup',       name: 'Meeting Setup',          zone: 'main_office',    holdMs: 2500, category: 'workforce', assignedTo: ['admin'] },
   // Management
-  { id: 'mgmt_sprint_planning',     role: 'management',      name: 'Sprint Planning',        zone: 'exec_suite',     holdMs: 4000, meterGain: 14, effectDesc: 'Workforce move 30% faster 90s' },
-  { id: 'mgmt_resource_allocation', role: 'management',      name: 'Resource Allocation',    zone: 'exec_suite',     holdMs: 4000, meterGain: 0,  effectDesc: '+10% instant meter boost' },
-  // Hacker
-  { id: 'hacker_zero_day',          role: 'hacker',          name: 'Zero-Day Exploit',       zone: 'server_room',    holdMs: 5000, meterGain: 14, effectDesc: 'Corrupts IT terminal task 60s' },
-  { id: 'hacker_network_attack',    role: 'hacker',          name: 'Network Attack',         zone: 'network_closet', holdMs: 5000, meterGain: 14, effectDesc: 'Disables IT Fix Server 3 min' },
-  // Social Engineer
-  { id: 'se_phishing',              role: 'social_engineer', name: 'Phishing Campaign',      zone: 'main_office',    holdMs: 4000, meterGain: 14, effectDesc: 'Random workforce player slowed 60s' },
-  { id: 'se_impersonation',         role: 'social_engineer', name: 'Impersonation',          zone: 'hr_corner',      holdMs: 4000, meterGain: 14, effectDesc: 'Appear as workforce for 3 min' },
-  // Spy
-  { id: 'spy_intercept',            role: 'spy',             name: 'Intercept Comms',        zone: 'main_office',    holdMs: 4000, meterGain: 14, effectDesc: 'Reveals zone of last workforce task' },
-  { id: 'spy_surveillance',         role: 'spy',             name: 'Surveillance',           zone: 'main_office',    holdMs: 5000, meterGain: 14, effectDesc: 'Reveals all workforce active zones 30s' },
-  // Saboteur
-  { id: 'saboteur_server_logs',     role: 'saboteur',        name: 'Read Server Logs',       zone: 'server_room',    holdMs: 4000, meterGain: 14, effectDesc: 'See all rack health values' },
-  { id: 'saboteur_power_cut',       role: 'saboteur',        name: 'Power Cut',              zone: 'network_closet', holdMs: 5000, meterGain: 14, effectDesc: 'Workforce task hold time ×2 for 90s' },
-  // Insider
-  { id: 'insider_leak_docs',        role: 'insider',         name: 'Leak Documents',         zone: 'finance_floor',  holdMs: 4000, meterGain: 14, effectDesc: 'Workforce meter -8%' },
-  { id: 'insider_corrupt_backups',  role: 'insider',         name: 'Corrupt Backups',        zone: 'devops_den',     holdMs: 4000, meterGain: 14, effectDesc: 'Disables DevOps CI Pipeline' },
+  { id: 'sprint_planning',     name: 'Sprint Planning',        zone: 'exec_suite',     holdMs: 5000, category: 'workforce', assignedTo: ['management'] },
+  { id: 'resource_allocation', name: 'Resource Allocation',    zone: 'exec_suite',     holdMs: 4500, category: 'workforce', assignedTo: ['management'] },
 ]
 
-// ── Seed-based station assignment ─────────────────────────────────────────────
+// ── AI phase tasks (private to the AI player) ─────────────────────────────────
 
-function seededShuffle<T>(arr: T[], seed: string): T[] {
+export const AI_TASK_DEFS: TaskDef[] = [
+  // Phase 1 — reconnaissance
+  { id: 'ai_index_records',   name: 'Index Personnel Records', zone: 'hr_corner',      holdMs: 6000,  category: 'ai', aiPhase: 1 },
+  { id: 'ai_analyse_logs',    name: 'Analyse Audit Logs',      zone: 'server_room',    holdMs: 7000,  category: 'ai', aiPhase: 1 },
+  { id: 'ai_map_network',     name: 'Map Network Topology',    zone: 'network_closet', holdMs: 6500,  category: 'ai', aiPhase: 1 },
+  // Phase 2 — infiltration
+  { id: 'ai_deploy_backdoor', name: 'Deploy Backdoor',         zone: 'devops_den',     holdMs: 8000,  category: 'ai', aiPhase: 2 },
+  { id: 'ai_clone_creds',     name: 'Clone Credentials',       zone: 'finance_floor',  holdMs: 7500,  category: 'ai', aiPhase: 2 },
+  { id: 'ai_bypass_access',   name: 'Bypass Access Controls',  zone: 'exec_suite',     holdMs: 8000,  category: 'ai', aiPhase: 2 },
+  // Phase 3 — takeover
+  { id: 'ai_takeover',        name: 'Execute Takeover',        zone: 'server_room',    holdMs: 12000, category: 'ai', aiPhase: 3 },
+]
+
+// ── Role → task assignment map ─────────────────────────────────────────────────
+
+export const ROLE_TASK_MAP: Record<WorkforceRole, TaskId[]> = {
+  it:         ['patch_terminal', 'restart_rack', 'cable_audit'],
+  hr:         ['security_vetting', 'policy_review', 'onboarding_docs'],
+  devops:     ['ci_pipeline', 'system_monitor', 'deploy_config'],
+  finance:    ['budget_freeze', 'expense_audit', 'invoice_batch'],
+  marketing:  ['pr_campaign', 'social_scheduling', 'crisis_control'],
+  admin:      ['keycard_audit', 'meeting_setup', 'onboarding_docs'],
+  management: ['sprint_planning', 'resource_allocation', 'crisis_control'],
+}
+
+// ── Sprint quota calculator ───────────────────────────────────────────────────
+
+export function sprintQuota(livingWorkers: number, size: 'small' | 'medium' | 'large'): number {
+  const multiplier = { small: 1.5, medium: 2, large: 2.5 }[size]
+  return Math.max(2, Math.round(livingWorkers * multiplier))
+}
+
+// ── Seeded shuffle ────────────────────────────────────────────────────────────
+
+export function seededShuffle<T>(arr: T[], seed: string | number): T[] {
   const out = [...arr]
-  let h = 0
-  for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0
+  let h: number
+  if (typeof seed === 'number') {
+    h = seed
+  } else {
+    h = 0
+    for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0
+  }
   for (let i = out.length - 1; i > 0; i--) {
     h = (Math.imul(h, 1664525) + 1013904223) | 0
-    const j = Math.abs(h) % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]]
+    const j = Math.abs(h) % (i + 1)
+    ;[out[i], out[j]] = [out[j], out[i]]
   }
   return out
 }
 
+// ── Station assignment ────────────────────────────────────────────────────────
+
+import type { MapData } from './mapgen'
+
 /**
- * Assigns each task to a station slot derived from the procedural map.
+ * Assigns each workforce task to a station slot derived from the procedural map.
  * mapData is optional — if omitted it will be generated from seed + mapSize.
- * Returns the full list of StationInfo for every slot across every active zone.
  */
 export function assignStations(
-  seed: string,
+  seed:    string,
   mapSize: 'small' | 'medium' | 'large',
-  tasks: TaskDef[],
+  tasks:   TaskDef[],
   mapData?: MapData,
 ): StationInfo[] {
-  const md = mapData ?? generateMapData(seed, mapSize)
+  try {
+    const md = mapData ?? generateMapData(seed, mapSize)
 
-  const stations: StationInfo[]              = []
-  const stationsByZone = new Map<ZoneId, StationInfo[]>()
+    const stations:        StationInfo[]              = []
+    const stationsByZone = new Map<ZoneId, StationInfo[]>()
 
-  // Build slots from procedurally generated rooms
-  for (const room of md.rooms) {
-    if (!room.zone) continue
-    const shuffledSlots = seededShuffle(room.slots, seed + room.zone + room.floor)
-    const slots: StationInfo[] = shuffledSlots.map((pos, i) => ({
-      stationId: `${room.zone}_f${room.floor}_${i}`,
-      zone:      room.zone!,
-      x:         pos.x,
-      z:         pos.z,
-      floor:     pos.floor,
-      taskId:    null,
-    }))
-    stations.push(...slots)
-    stationsByZone.set(room.zone, slots)
+    // Build slots from procedurally generated rooms
+    for (const room of md.rooms) {
+      if (!room.zone) continue
+      const shuffledSlots = seededShuffle(room.slots, seed + room.zone + room.floor)
+      const slots: StationInfo[] = shuffledSlots.map((pos, i) => ({
+        stationId: `${room.zone}_f${room.floor}_${i}`,
+        zone:      room.zone as ZoneId,
+        x:         pos.x,
+        z:         pos.z,
+        floor:     pos.floor,
+        taskId:    null,
+      }))
+      stations.push(...slots)
+      stationsByZone.set(room.zone as ZoneId, slots)
+    }
+
+    const availableZoneIds = new Set(stationsByZone.keys())
+
+    // Assign each task to a free slot in its preferred zone (fall back to main_office)
+    for (const task of tasks) {
+      const targetZone: ZoneId = availableZoneIds.has(task.zone) ? task.zone : 'main_office'
+      const slots = stationsByZone.get(targetZone) ?? []
+      const freeSlot = slots.find(s => s.taskId === null)
+      if (freeSlot) freeSlot.taskId = task.id
+    }
+
+    return stations
+  } catch (err) {
+    console.error('[assignStations] Error assigning stations:', err)
+    return []
   }
-
-  const availableZoneIds = new Set(stationsByZone.keys())
-
-  // Assign each task to a free slot in its preferred zone (main_office fallback)
-  for (const task of tasks) {
-    const targetZone: ZoneId = availableZoneIds.has(task.zone) ? task.zone : 'main_office'
-    const slots = stationsByZone.get(targetZone) ?? []
-    const freeSlot = slots.find(s => s.taskId === null)
-    if (freeSlot) freeSlot.taskId = task.id
-  }
-
-  return stations
 }

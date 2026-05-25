@@ -1,31 +1,38 @@
-import 'reflect-metadata'
-import { Schema, type, MapSchema } from '@colyseus/schema'
+import { Schema, MapSchema, SetSchema, type, ArraySchema } from '@colyseus/schema'
 
 export class Player extends Schema {
-  @type('string')  sessionId: string  = ''
-  @type('string')  name: string       = ''
-  @type('string')  role: string       = ''
-  @type('string')  faction: string    = ''
-  @type('float32') x: number          = 0
-  @type('float32') z: number          = 0
-  @type('float32') facing: number     = 0
-  @type('boolean') connected: boolean = true
-  @type('boolean') isBot: boolean     = false
-  @type('boolean') disguised: boolean = false
-  @type('boolean') slowed: boolean    = false
-  @type('int8')    floor: number      = 0
+  @type('string')  sessionId  = ''
+  @type('string')  name       = ''
+  @type('string')  role       = ''
+  @type('number')  x          = 0
+  @type('number')  z          = 0
+  @type('number')  floor      = 0
+  @type('number')  facing     = 0
+  @type('boolean') isBot      = false
+  @type('boolean') isEliminated = false
+  @type('boolean') isSpectator  = false
+  @type('number')  allHandsLeft = 2
+}
+
+export class Body extends Schema {
+  @type('string') bodyId = ''
+  @type('string') name   = ''
+  @type('number') x      = 0
+  @type('number') z      = 0
+  @type('number') floor  = 0
 }
 
 export class GameState extends Schema {
-  @type({ map: Player }) players         = new MapSchema<Player>()
-  @type('string')        phase           = 'waiting'   // waiting | playing | ended
-  @type('string')        mapSeed         = ''
-  @type('string')        mapSize         = 'medium'
-  @type('string')        winner          = ''
-  @type('float32')       workforceMeter:  number = 0
-  @type('float32')       oppositionMeter: number = 0
-  @type('float32')       rackHealthA:     number = 100
-  @type('float32')       rackHealthB:     number = 100
-  @type('float32')       rackHealthC:     number = 100
-  @type('boolean')       lockdownActive:  boolean = false
+  @type({ map: Player }) players       = new MapSchema<Player>()
+  @type({ map: Body })   bodies        = new MapSchema<Body>()
+  @type({ set: 'string' }) completedTasks = new SetSchema<string>()
+  @type('string')  phase               = 'lobby'  // lobby | briefing | game | meeting | retro | end
+  @type('string')  winner              = ''
+  @type('string')  winReason           = ''
+  // ── Sprint fields ─────────────────────────────────────────────────────────
+  @type('number')  sprintNumber        = 0
+  @type('number')  sprintQuota         = 0
+  @type('number')  sprintDone          = 0
+  @type('number')  sprintTimeLeft      = 0
+  @type('string')  sprintSize          = 'medium'
 }

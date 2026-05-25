@@ -28,11 +28,15 @@ export default function NewGameScreen({ onNavigate }: Props) {
   const [factions, setFactions]         = useState<'random' | 'manual' | 'balanced'>('balanced')
   const [maxPlayers, setMaxPlayers]     = useState(6)
   const [botCount, setBotCount]         = useState(3)
+  const [spectateMode, setSpectateMode] = useState(false)
   const [roomCode, setRoomCode]         = useState<string | null>(null)
   const [creating, setCreating]         = useState(false)
   const [error, setError]               = useState('')
-  const { setRoom }                     = useGameRoom()
+  const { setRoom, setSpectator }       = useGameRoom()
   const lobbyTimerRef                   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // In spectate mode, bots fill all non-host slots
+  const effectiveBotCount = spectateMode ? maxPlayers - 1 : botCount
 
   // Cancel the auto-navigate timer if this screen unmounts before it fires
   useEffect(() => () => { if (lobbyTimerRef.current) clearTimeout(lobbyTimerRef.current) }, [])
@@ -46,9 +50,11 @@ export default function NewGameScreen({ onNavigate }: Props) {
         mapSize,
         maxPlayers,
         factionAssignment: factions,
-        botCount,
+        botCount: effectiveBotCount,
+        spectate: spectateMode,
       })
       setRoom(room)
+      if (spectateMode) setSpectator(true)
       // Register handlers NOW — before LobbyScreen mounts — so no messages are missed
       room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
         useGameRoom.getState().setRole(data.role as any, data.faction as any)
@@ -57,7 +63,7 @@ export default function NewGameScreen({ onNavigate }: Props) {
         useGameRoom.getState().setGameEnd(data.winner, data.reason)
       })
       setRoomCode(room.id.slice(0, 8).toUpperCase())
-      lobbyTimerRef.current = setTimeout(() => onNavigate('lobby'), 1800)
+      lobbyTimerRef.current = setTimeout(() => onNavigate(spectateMode ? 'spectator' : 'lobby'), 1800)
     } catch {
       // Server offline — show mock code for UI demo
       setRoomCode(generateCode())
@@ -141,26 +147,43 @@ export default function NewGameScreen({ onNavigate }: Props) {
 
         {/* Bot players */}
         <div className={styles.formField}>
-          <label className={styles.fieldLabel}>BOT PLAYERS — <span className={styles.playerCount}>{botCount}</span></label>
+          <label className={styles.fieldLabel}>BOT PLAYERS — <span className={styles.playerCount}>{effectiveBotCount}</span></label>
           <div className={styles.inputRow}>
-            <button className={styles.ghostBtn} onClick={() => setBotCount(c => Math.max(0, c - 1))}>−</button>
+            <button className={styles.ghostBtn} onClick={() => { setSpectateMode(false); setBotCount(c => Math.max(0, c - 1)) }} disabled={spectateMode}>−</button>
             <div className={styles.sliderRow} style={{ flex: 1 }}>
               <span className={styles.sliderCap}>0</span>
               <input
                 type="range" min={0} max={9} step={1}
-                value={botCount}
-                onChange={e => setBotCount(+e.target.value)}
+                value={effectiveBotCount}
+                onChange={e => { setSpectateMode(false); setBotCount(+e.target.value) }}
                 className={styles.slider}
+                disabled={spectateMode}
               />
               <span className={styles.sliderCap}>9</span>
             </div>
-            <button className={styles.ghostBtn} onClick={() => setBotCount(c => Math.min(9, c + 1))}>+</button>
+            <button className={styles.ghostBtn} onClick={() => { setSpectateMode(false); setBotCount(c => Math.min(9, c + 1)) }} disabled={spectateMode}>+</button>
           </div>
           <div className={styles.playerPips}>
             {Array.from({ length: 9 }, (_, i) => (
-              <span key={i} className={`${styles.pip} ${i < botCount ? styles.pipFilled : ''}`} style={{ background: i < botCount ? 'var(--brand-orange)' : undefined }} />
+              <span key={i} className={`${styles.pip} ${i < effectiveBotCount ? styles.pipFilled : ''}`} style={{ background: i < effectiveBotCount ? 'var(--brand-orange)' : undefined }} />
             ))}
           </div>
+        </div>
+
+        {/* Spectate mode toggle */}
+        <div className={styles.formField}>
+          <button
+            className={`${styles.ghostBtn} ${spectateMode ? styles.segActive : ''}`}
+            style={{ width: '100%', justifyContent: 'center', padding: '0.75rem 1rem', fontSize: '0.9rem', letterSpacing: '0.1em' }}
+            onClick={() => setSpectateMode(m => !m)}
+          >
+            {spectateMode ? '👁 SPECTATE MODE ON — all bots will fill the game' : '👁 SPECTATE MODE — fill with bots & watch'}
+          </button>
+          {spectateMode && (
+            <div style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--brand-orange)', marginTop: '0.4rem', opacity: 0.8 }}>
+              {effectiveBotCount} bots · you will observe from the sidelines
+            </div>
+          )}
         </div>
 
         {/* Create button */}

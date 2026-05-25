@@ -1,99 +1,113 @@
 import { create } from 'zustand'
 import type { Room } from 'colyseus.js'
-import type { PlayerRole, Faction, EffectUpdate, StationInfo, TaskId } from '@shared/types'
+import type { PlayerRole, StationInfo, TaskId, BodyInfo, SprintInfo } from '@shared/types'
 
+// ── Lobby player (mapped from Colyseus schema) ────────────────────────────────
 export interface LobbyPlayer {
-  sessionId: string
-  name:      string
-  x:         number
-  z:         number
-  facing:    number
-  faction:   string
-  role:      string
-  connected: boolean
-  isBot:     boolean
-  disguised: boolean
-  slowed:    boolean
-  floor:     number
+  sessionId:    string
+  name:         string
+  x:            number
+  z:            number
+  facing:       number
+  role:         string
+  connected:    boolean
+  isBot:        boolean
+  isEliminated: boolean
+  isSpectator:  boolean
+  allHandsLeft: number
+  floor:        number
 }
 
+// ── Task completion toast ─────────────────────────────────────────────────────
 export interface TaskToast {
   id:         string
-  role:       string
-  effectDesc: string
-  meterGain:  number
+  playerName: string
+  taskId:     TaskId
   expiresAt:  number
 }
 
-export type ActiveEffects = EffectUpdate
-
-const DEFAULT_EFFECTS: ActiveEffects = {
-  workforceSpeedActive:  false,
-  lockdownActive:        false,
-  workforceHoldSlow:     false,
-  oppositionHoldSlow:    false,
-  hackerCorruption:      false,
-  ciPipelineActive:      false,
-  badgeRenewalRequired:  false,
+// ── Retro data (from retro_start message) ─────────────────────────────────────
+export interface RetroData {
+  sprint:   number
+  quotaMet: boolean
+  stats:    Array<{ sessionId: string; name: string; completed: number }>
 }
 
+// ── Store shape ───────────────────────────────────────────────────────────────
 interface GameRoomStore {
-  room:             Room | null
-  myRole:           PlayerRole | null
-  myFaction:        Faction | null
-  players:          LobbyPlayer[]
-  incidents:        { text: string; type: 'info' | 'warn' | 'danger' | 'success'; time: string }[]
-  workforceMeter:   number
-  oppositionMeter:  number
-  gameEnd:          { winner: string; reason: string } | null
-  activeEffects:    ActiveEffects
-  stations:         StationInfo[]
-  completedTasks:   Set<TaskId>
-  holdingStationId: string | null
-  holdStartedAt:    number
-  toasts:           TaskToast[]
-  monitorSnapshot:  { rackA: number; rackB: number; rackC: number } | null
-  mapSeed:          string
-  mapSize:          'small' | 'medium' | 'large'
+  room:               Room | null
+  myRole:             PlayerRole | null
+  myAssignedTasks:    TaskId[]
+  myIsAi:             boolean
+  aiPhase:            number
+  aiPhaseTasks:       TaskId[]
+  players:            LobbyPlayer[]
+  incidents:          { text: string; type: 'info' | 'warn' | 'danger' | 'success'; time: string }[]
+  gameEnd:            { winner: string; reason: string } | null
+  stations:           StationInfo[]
+  completedTasks:     Set<TaskId>
+  holdingStationId:   string | null
+  holdStartedAt:      number
+  toasts:             TaskToast[]
+  bodies:             BodyInfo[]
+  sprint:             SprintInfo | null
+  retroData:          RetroData | null
+  mapSeed:            string
+  mapSize:            'small' | 'medium' | 'large'
+  isSpectator:        boolean
+  spectateTarget:     string | null
 
   setRoom:            (room: Room) => void
-  setRole:            (role: PlayerRole, faction: Faction) => void
+  setRole:            (role: PlayerRole, assignedTasks: TaskId[]) => void
+  setAiBriefing:      (phase: number, phaseTasks: TaskId[]) => void
   setPlayers:         (players: LobbyPlayer[]) => void
   addIncident:        (text: string, type?: GameRoomStore['incidents'][0]['type'], time?: string) => void
-  setMeters:          (workforce: number, opposition: number) => void
   setGameEnd:         (winner: string, reason: string) => void
-  setActiveEffects:   (e: ActiveEffects) => void
   setStations:        (stations: StationInfo[]) => void
   completeTask:       (taskId: TaskId) => void
   setHolding:         (stationId: string | null) => void
   addToast:           (toast: Omit<TaskToast, 'id'>) => void
   clearExpiredToasts: () => void
-  setMonitorSnapshot: (s: { rackA: number; rackB: number; rackC: number } | null) => void
+  addBody:            (body: BodyInfo) => void
+  removeBody:         (bodyId: string) => void
+  setSprint:          (info: SprintInfo) => void
+  setRetroData:       (data: RetroData | null) => void
   setMapConfig:       (seed: string, size: 'small' | 'medium' | 'large') => void
+  setSpectator:       (isSpectator: boolean) => void
+  setSpectateTarget:  (sessionId: string | null) => void
   clearRoom:          () => void
 }
 
 export const useGameRoom = create<GameRoomStore>((set) => ({
   room:             null,
   myRole:           null,
-  myFaction:        null,
+  myAssignedTasks:  [],
+  myIsAi:           false,
+  aiPhase:          0,
+  aiPhaseTasks:     [],
   players:          [],
   incidents:        [],
-  workforceMeter:   0,
-  oppositionMeter:  0,
   gameEnd:          null,
-  activeEffects:    { ...DEFAULT_EFFECTS },
   stations:         [],
   completedTasks:   new Set(),
   holdingStationId: null,
   holdStartedAt:    0,
   toasts:           [],
-  monitorSnapshot:  null,
+  bodies:           [],
+  sprint:           null,
+  retroData:        null,
   mapSeed:          '',
   mapSize:          'small' as const,
+  isSpectator:      false,
+  spectateTarget:   null,
 
   setRoom:          (room) => set({ room }),
-  setRole:          (myRole, myFaction) => set({ myRole, myFaction }),
+  setRole:          (myRole, myAssignedTasks) => set({ myRole, myAssignedTasks }),
+  setAiBriefing:    (aiPhase, aiPhaseTasks) => set(s => ({
+    myIsAi:      true,
+    aiPhase,
+    aiPhaseTasks: [...s.aiPhaseTasks, ...aiPhaseTasks],
+  })),
   setPlayers:       (players) => set({ players }),
   addIncident:      (text, type = 'info', time) => set(s => ({
     incidents: [...s.incidents.slice(-49), {
@@ -101,9 +115,7 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
       time: time ?? new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     }],
   })),
-  setMeters:        (workforceMeter, oppositionMeter) => set({ workforceMeter, oppositionMeter }),
   setGameEnd:       (winner, reason) => set({ gameEnd: { winner, reason } }),
-  setActiveEffects: (activeEffects) => set({ activeEffects }),
   setStations:      (stations) => set({ stations }),
   completeTask:     (taskId) => set(s => ({ completedTasks: new Set([...s.completedTasks, taskId]) })),
   setHolding:       (holdingStationId) => set({ holdingStationId, holdStartedAt: holdingStationId ? Date.now() : 0 }),
@@ -111,12 +123,18 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
     toasts: [...s.toasts, { ...toast, id: Math.random().toString(36).slice(2) }],
   })),
   clearExpiredToasts: () => set(s => ({ toasts: s.toasts.filter(t => t.expiresAt > Date.now()) })),
-  setMonitorSnapshot: (monitorSnapshot) => set({ monitorSnapshot }),
-  setMapConfig:       (mapSeed, mapSize) => set({ mapSeed, mapSize }),
-  clearRoom:          () => set({
-    room: null, myRole: null, myFaction: null, players: [], incidents: [],
-    workforceMeter: 0, oppositionMeter: 0, gameEnd: null,
-    activeEffects: { ...DEFAULT_EFFECTS }, stations: [], completedTasks: new Set(),
-    holdingStationId: null, holdStartedAt: 0, toasts: [], monitorSnapshot: null,
+  addBody:          (body) => set(s => ({ bodies: [...s.bodies.filter(b => b.bodyId !== body.bodyId), body] })),
+  removeBody:       (bodyId) => set(s => ({ bodies: s.bodies.filter(b => b.bodyId !== bodyId) })),
+  setSprint:        (sprint) => set({ sprint }),
+  setRetroData:     (retroData) => set({ retroData }),
+  setMapConfig:     (mapSeed, mapSize) => set({ mapSeed, mapSize }),
+  setSpectator:     (isSpectator) => set({ isSpectator }),
+  setSpectateTarget:(spectateTarget) => set({ spectateTarget }),
+  clearRoom:        () => set({
+    room: null, myRole: null, myAssignedTasks: [], myIsAi: false,
+    aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
+    stations: [], completedTasks: new Set(), holdingStationId: null,
+    holdStartedAt: 0, toasts: [], bodies: [], sprint: null, retroData: null,
+    isSpectator: false, spectateTarget: null,
   }),
 }))

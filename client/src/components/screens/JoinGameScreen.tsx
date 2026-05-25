@@ -30,7 +30,7 @@ export default function JoinGameScreen({ onNavigate }: Props) {
   const [joining, setJoining]     = useState<string | null>(null)
   const [error, setError]         = useState('')
   const [liveRooms, setLiveRooms] = useState<MockRoom[] | null>(null)
-  const { setRoom }               = useGameRoom()
+  const { setRoom, setSpectator }       = useGameRoom()
 
   // Try to fetch live rooms; fall back to mock
   useEffect(() => {
@@ -51,21 +51,22 @@ export default function JoinGameScreen({ onNavigate }: Props) {
       .catch(() => setLiveRooms(null))
   }, [])
 
-  const handleJoin = async (roomCode: string) => {
+  const handleJoin = async (roomCode: string, spectate = false) => {
     const cleaned = roomCode.replace(/[^A-Z0-9-]/gi, '').toUpperCase()
     if (cleaned.length < 7) { setError('Room code must be 7+ characters (e.g. BNF-4XZ)'); return }
     setError('')
     setJoining(cleaned)
     try {
-      const room = await colyseusClient.joinById(cleaned)
+      const room = await colyseusClient.joinById(cleaned, spectate ? { spectate: true } : {})
       setRoom(room)
+      if (spectate) setSpectator(true)
       room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
         useGameRoom.getState().setRole(data.role as any, data.faction as any)
       })
       room.onMessage('game_end', (data: { winner: string; reason: string }) => {
         useGameRoom.getState().setGameEnd(data.winner, data.reason)
       })
-      onNavigate('lobby')
+      onNavigate(spectate ? 'spectator' : 'lobby')
     } catch {
       setError('Room not found, full, or server offline.')
       setJoining(null)
@@ -139,7 +140,7 @@ export default function JoinGameScreen({ onNavigate }: Props) {
               <span style={{ flex: 1, textAlign: 'center', color: statusColor(room.status), fontSize: '0.67rem', letterSpacing: '0.06em' }}>
                 {room.status}
               </span>
-              <span style={{ flex: 0.7, textAlign: 'right' }}>
+            <span style={{ flex: 0.7, textAlign: 'right' }}>
                 {room.status !== 'IN PROGRESS' && (
                   <button
                     className={styles.smallBtn}
@@ -148,6 +149,16 @@ export default function JoinGameScreen({ onNavigate }: Props) {
                   >
                     {joining === room.code ? '…' : 'JOIN'}
                   </button>
+                )}
+                <button
+                  className={styles.smallBtn}
+                  style={{ marginLeft: '0.3rem', opacity: 0.7 }}
+                  onClick={() => handleJoin(room.code, true)}
+                  disabled={joining !== null}
+                  title="Watch as spectator"
+                >
+                  👁
+                </button>
                 )}
               </span>
             </div>

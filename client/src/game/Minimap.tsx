@@ -5,7 +5,6 @@
  */
 import { useRef, useEffect } from 'react'
 import { useGameRoom } from '../store/useGameRoom'
-import { TASK_DEFS } from '@shared/tasks'
 import { generateMapData, CELL_SIZE } from '@shared/mapgen'
 import type { MapData } from '@shared/mapgen'
 import type { StationInfo } from '@shared/types'
@@ -129,7 +128,7 @@ export default function Minimap() {
         }
 
         const myTaskIds = myRole
-          ? new Set(TASK_DEFS.filter(t => t.role === myRole).map(t => t.id))
+          ? new Set(useGameRoom.getState().myAssignedTasks)
           : new Set<string>()
 
         // ── Station dots ─────────────────────────────────────────────────
@@ -186,9 +185,9 @@ export default function Minimap() {
           let color = '#666'
           if (isSelf) {
             color = '#ffffff'
-          } else if (player.faction === 'workforce') {
+          } else if (!player.isEliminated) {
             color = '#4ade80'
-          } else if (player.faction === 'opposition' && !player.disguised) {
+          } else {
             color = '#f87171'
           }
 

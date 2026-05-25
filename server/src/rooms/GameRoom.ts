@@ -1,45 +1,39 @@
 import { Room, Client } from 'colyseus'
-import { GameState, Player } from './GameState'
+import { GameState, Player, Body } from './GameState'
 import {
   WORKFORCE_ROLES,
-  OPPOSITION_ROLES,
-  TASK_METER_GAIN,
-  METER_DEGRADE_INTERVAL_MS,
-  RACK_DEGRADE_INTERVAL_MS,
+  type AiPhase,
   type PlayerRole,
   type RoomOptions,
   type TaskId,
   type StationInfo,
   type ZoneId,
+  SPRINT_DURATION_MS,
+  SPRINT_COUNT,
+  SHUTDOWN_COOLDOWN_MS,
+  ALL_HANDS_PER_PLAYER,
 } from '../../../shared/src/types'
-import { TASK_DEFS, assignStations } from '../../../shared/src/tasks'
+import {
+  TASK_DEFS,
+  AI_TASK_DEFS,
+  ROLE_TASK_MAP,
+  sprintQuota,
+  assignStations,
+} from '../../../shared/src/tasks'
+import {
+  generateBotName,
+  resetBotNameCounter,
+  randomPersonality,
+  fillTemplate,
+  PERSONALITIES,
+  type BotPersonality,
+} from '../../../shared/src/botData'
 
-const OPPOSITION_RATIO = 0.25
-const INTERACT_R       = 2.5
-
-const BOT_NAMES = [
-  'AGENT-7', 'UNIT-X', 'PROTO-9', 'GHOST-3', 'SIGMA-1',
-  'DELTA-4', 'ECHO-2', 'ZETA-6', 'OMEGA-8', 'KILO-5',
-]
-
-interface ActiveEffects {
-  workforceSpeedUntil:     number
-  lockdownUntil:           number
-  rackDegradePausedUntil:  number
-  ciPipelineUntil:         number
-  ciPipelineDisabled:      boolean
-  workforceHoldSlowUntil:  number
-  hackerCorruptionUntil:   number
-  oppositionHoldSlowUntil: number
-  extraOppDegradeUntil:    number
-  oppMeterGainMultUntil:   number
-  oppMeterGainMult:        number
-}
+const INTERACT_R = 2.5
 
 interface StationState {
-  info:          StationInfo
-  disabledUntil: number
-  completedBy:   string | null
+  info:        StationInfo
+  completedBy: string | null
 }
 
 interface HoldState {
@@ -56,576 +50,907 @@ type BotAI = {
 
 export class GameRoom extends Room<GameState> {
   maxClients = 10
-  private botAI     = new Map<string, BotAI>()
-  private stations  = new Map<string, StationState>()
-  private holdState = new Map<string, HoldState>()
-  private effects: ActiveEffects = {
-    workforceSpeedUntil:     0,
-    lockdownUntil:           0,
-    rackDegradePausedUntil:  0,
-    ciPipelineUntil:         0,
-    ciPipelineDisabled:      false,
-    workforceHoldSlowUntil:  0,
-    hackerCorruptionUntil:   0,
-    oppositionHoldSlowUntil: 0,
-    extraOppDegradeUntil:    0,
-    oppMeterGainMultUntil:   0,
-    oppMeterGainMult:        1.0,
-  }
+
+  // ── Private server state ───────────────────────────────────────────────────
+  private botAI            = new Map<string, BotAI>()
+  private botPersonalities = new Map<string, BotPersonality>()
+  private botNameCounter   = 0
+  private stations        = new Map<string, StationState>()
+  private holdState       = new Map<string, HoldState>()
+  private aiSessionId:    string | null = null
+  private aiPhase:        AiPhase = 1
+  private aiPhaseCompleted = new Set<TaskId>()
+  private shutdownCooldownUntil = 0
+  private sprintTimer:    ReturnType<typeof this.clock.setInterval> | null = null
+  private votes           = new Map<string, string>()   // voter → target sessionId | 'skip'
+  private perkVotes       = new Map<string, string>()
+  private activePerk:     string | null = null
+  private assignedTasks   = new Map<string, TaskId[]>() // sessionId → assigned task ids
+  private sprintPlayerDone = new Map<string, number>()  // sessionId → tasks completed this sprint
+  private allHandsTimeout: ReturnType<typeof this.clock.setTimeout> | null = null
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   onCreate(options: Partial<RoomOptions>) {
-    this.setState(new GameState())
-    this.state.mapSize = options.mapSize ?? 'medium'
-    this.state.mapSeed = Math.random().toString(36).slice(2, 8).toUpperCase()
+    try {
+      this.setState(new GameState())
+      this.state.phase      = 'lobby'
+      this.state.sprintSize = options.sprintSize ?? 'medium'
 
-    // ── Message handlers ─────────────────────────────────────────────────────
+      const seed = Math.random().toString(36).slice(2, 8).toUpperCase()
+      ;(this.state as any).mapSeed = seed
+      ;(this.state as any).mapSize = options.mapSize ?? 'medium'
 
+      resetBotNameCounter()
+      this.registerMessageHandlers()
+    } catch (err) {
+      console.error('[GameRoom.onCreate] Error:', err)
+    }
+  }
+
+  onJoin(client: Client, options: { name?: string; isBot?: boolean; spectate?: boolean }) {
+    try {
+      const player      = new Player()
+      player.sessionId  = client.sessionId
+      player.isBot      = options.isBot ?? false
+      player.isSpectator = options.spectate ?? false
+
+      if (player.isBot) {
+        // Generate a unique funny name for this bot
+        player.name = generateBotName(this.botNameCounter++)
+        const personality = randomPersonality(this.botNameCounter)
+        this.botPersonalities.set(client.sessionId, personality)
+        this.botAI.set(client.sessionId, { mode: 'wander', workUntil: 0, targetStation: null })
+      } else {
+        player.name = (options.name ?? 'Player').slice(0, 24)
+      }
+
+      player.x = (this.state as any).startX ?? 10
+      player.z = (this.state as any).startZ ?? 10
+      this.state.players.set(client.sessionId, player)
+    } catch (err) {
+      console.error('[GameRoom.onJoin] Error:', err)
+    }
+  }
+
+  onLeave(client: Client) {
+    try {
+      this.state.players.delete(client.sessionId)
+      this.holdState.delete(client.sessionId)
+      this.votes.delete(client.sessionId)
+      this.botAI.delete(client.sessionId)
+      this.botPersonalities.delete(client.sessionId)
+      this.sprintPlayerDone.delete(client.sessionId)
+    } catch (err) {
+      console.error('[GameRoom.onLeave] Error:', err)
+    }
+  }
+
+  onDispose() {
+    try {
+      if (this.sprintTimer)    this.sprintTimer.clear()
+      if (this.allHandsTimeout) this.allHandsTimeout.clear()
+    } catch (err) {
+      console.error('[GameRoom.onDispose] Error:', err)
+    }
+  }
+
+  // ── Message handlers ───────────────────────────────────────────────────────
+
+  private registerMessageHandlers() {
+    // ── Move ──────────────────────────────────────────────────────────────────
     this.onMessage('move', (client: Client, data: { x: number; z: number; floor?: number; facing?: number }) => {
-      const player = this.state.players.get(client.sessionId)
-      if (!player) return
-      player.x = data.x
-      player.z = data.z
-      if (data.floor   !== undefined) player.floor   = data.floor
-      if (data.facing  !== undefined) player.facing  = data.facing
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated) return
+        player.x = data.x
+        player.z = data.z
+        if (data.floor   !== undefined) player.floor  = data.floor
+        if (data.facing  !== undefined) player.facing = data.facing
 
-      // Cancel hold if player strays too far
-      const hold = this.holdState.get(client.sessionId)
-      if (hold) {
-        const st = this.stations.get(hold.stationId)
-        if (st) {
-          const dx = data.x - st.info.x
-          const dz = data.z - st.info.z
-          if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) {
-            this.holdState.delete(client.sessionId)
+        // Cancel hold if player moves away from station
+        const hold = this.holdState.get(client.sessionId)
+        if (hold) {
+          const st = this.stations.get(hold.stationId)
+          if (st) {
+            const dx = data.x - st.info.x
+            const dz = data.z - st.info.z
+            if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) {
+              this.holdState.delete(client.sessionId)
+            }
           }
         }
+      } catch (err) {
+        console.error('[GameRoom] move error:', err)
       }
     })
 
+    // ── Start game ─────────────────────────────────────────────────────────────
     this.onMessage('start_game', (client: Client) => {
-      const players = Array.from(this.state.players.values())
-      const host = players.filter(p => !p.isBot)[0]
-      if (host?.sessionId !== client.sessionId) return
-      if (this.state.phase !== 'waiting') return
+      try {
+        const allPlayers = Array.from(this.state.players.values())
+        const humanPlayers = allPlayers.filter(p => !p.isBot)
+        const host = humanPlayers[0]
+        if (host?.sessionId !== client.sessionId) return
+        if (this.state.phase !== 'lobby') return
 
-      this.state.phase = 'playing'
+        this.state.phase = 'briefing'
 
-      const mapSize = this.state.mapSize as 'small' | 'medium' | 'large'
-      const stationList = assignStations(this.state.mapSeed, mapSize, TASK_DEFS)
-      for (const info of stationList) {
-        this.stations.set(info.stationId, { info, disabledUntil: 0, completedBy: null })
-      }
+        const seed    = (this.state as any).mapSeed as string
+        const mapSize = (this.state as any).mapSize as 'small' | 'medium' | 'large'
 
-      this.state.players.forEach(p => { if (p.role === 'insider') p.disguised = true })
-
-      this.broadcast('game_start', { seed: this.state.mapSeed, mapSize })
-      this.broadcast('station_list', { stations: stationList })
-      this.broadcastEffects()
-      console.log(`[GameRoom] Game started · ${stationList.length} stations · seed ${this.state.mapSeed}`)
-    })
-
-    // Client can re-request the station list (e.g. if it mounted after game_start)
-    this.onMessage('request_station_list', (client: Client) => {
-      if (this.state.phase !== 'playing') return
-      const stationList = Array.from(this.stations.values()).map(s => s.info)
-      client.send('station_list', { stations: stationList })
-      this.broadcastEffects()
-    })
-
-    this.onMessage('task_hold_start', (client: Client, data: { stationId: string }) => {
-      const player = this.state.players.get(client.sessionId)
-      if (!player || this.state.phase !== 'playing') return
-
-      const station = this.stations.get(data.stationId)
-      if (!station || station.completedBy) return
-
-      // Floor check — player must be on the same floor as the station
-      if ((station.info.floor ?? 0) !== (player.floor ?? 0)) return
-
-      if (station.disabledUntil > this.clock.currentTime) {
-        client.send('incident', { message: 'Station offline', severity: 'warn', time: ts() })
-        return
-      }
-
-      // Admin lockdown — block opposition from server room
-      if (player.faction === 'opposition' && station.info.zone === 'server_room' &&
-          this.effects.lockdownUntil > this.clock.currentTime) {
-        client.send('incident', { message: 'SERVER ROOM LOCKED DOWN', severity: 'danger', time: ts() })
-        return
-      }
-
-      const taskDef = station.info.taskId ? TASK_DEFS.find(t => t.id === station.info.taskId) : null
-      if (!taskDef || taskDef.role !== player.role) return
-
-      const now = this.clock.currentTime
-      let holdMs = taskDef.holdMs
-
-      if (player.faction === 'workforce') {
-        if (this.effects.workforceHoldSlowUntil > now) holdMs *= 2
-        if (taskDef.id === 'it_repair_terminal') {
-          if (!this.effects.ciPipelineDisabled && this.effects.ciPipelineUntil > now) holdMs = Math.ceil(holdMs / 2)
-          if (this.effects.hackerCorruptionUntil > now) holdMs *= 2
+        // Build station list from map
+        const stationList = assignStations(seed, mapSize, TASK_DEFS)
+        for (const info of stationList) {
+          this.stations.set(info.stationId, { info, completedBy: null })
         }
-      } else {
-        if (this.effects.oppositionHoldSlowUntil > now) holdMs *= 2
+
+        // Assign roles and tasks to players
+        this.assignRolesAndTasks(allPlayers)
+
+        this.broadcast('game_start', { seed, mapSize })
+
+        // Start sprint 1 after a short briefing delay
+        this.clock.setTimeout(() => {
+          this.startSprint(1)
+        }, 5000)
+      } catch (err) {
+        console.error('[GameRoom] start_game error:', err)
       }
-
-      this.holdState.set(client.sessionId, { stationId: data.stationId, startedAt: now, holdMs })
     })
 
-    this.onMessage('task_hold_cancel', () => {
-      // client.sessionId available via closure not needed here — but we need the param
+    // ── Task hold start ────────────────────────────────────────────────────────
+    this.onMessage('task_hold_start', (client: Client, data: { stationId: string }) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated) return
+        if (this.state.phase !== 'game') return
+
+        const stState = this.stations.get(data.stationId)
+        if (!stState || stState.completedBy || !stState.info.taskId) return
+
+        const taskId = stState.info.taskId as TaskId
+
+        // For workforce tasks: check that this task is in the player's assigned list
+        const playerTasks = this.assignedTasks.get(client.sessionId) ?? []
+        const allTaskDefs = [...TASK_DEFS, ...AI_TASK_DEFS]
+        const td = allTaskDefs.find(t => t.id === taskId)
+        if (!td) return
+
+        if (td.category === 'workforce' && !playerTasks.includes(taskId)) return
+
+        // AI tasks: only the AI player can work on them (verified via aiSessionId)
+        if (td.category === 'ai' && client.sessionId !== this.aiSessionId) return
+
+        // Floor check
+        if (stState.info.floor !== player.floor) return
+
+        // Proximity check
+        const dx = player.x - stState.info.x
+        const dz = player.z - stState.info.z
+        if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) return
+
+        const holdMs = td.holdMs
+        this.holdState.set(client.sessionId, {
+          stationId: data.stationId,
+          startedAt: Date.now(),
+          holdMs,
+        })
+
+        // Schedule task completion
+        this.clock.setTimeout(() => {
+          this.completeTask(client.sessionId, data.stationId)
+        }, holdMs)
+      } catch (err) {
+        console.error('[GameRoom] task_hold_start error:', err)
+      }
     })
-    // Re-register with correct signature
+
+    // ── Task hold cancel ───────────────────────────────────────────────────────
     this.onMessage('task_hold_cancel', (client: Client) => {
       this.holdState.delete(client.sessionId)
     })
 
-    this.onMessage('badge_renewal_done', (client: Client) => {
-      const p = this.state.players.get(client.sessionId) as any
-      if (p) { p.badgeLockout = false }
+    // ── Report body ────────────────────────────────────────────────────────────
+    this.onMessage('report_body', (client: Client, data: { bodyId: string }) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated) return
+        if (this.state.phase !== 'game') return
+
+        const body = this.state.bodies.get(data.bodyId)
+        if (!body) return
+
+        // Proximity check to body
+        if (body.floor !== player.floor) return
+        const dx = player.x - body.x
+        const dz = player.z - body.z
+        if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R * 2) return
+
+        this.triggerAllHands(player.name, data.bodyId)
+      } catch (err) {
+        console.error('[GameRoom] report_body error:', err)
+      }
     })
 
-    // ── Hold progress tick (200ms) ───────────────────────────────────────────
-    this.clock.setInterval(() => {
-      if (this.state.phase !== 'playing') return
-      const now = this.clock.currentTime
-      for (const [sessionId, hold] of this.holdState) {
-        if (now - hold.startedAt >= hold.holdMs) {
-          this.holdState.delete(sessionId)
-          this.completeTask(sessionId, hold.stationId)
+    // ── Call all-hands (emergency) ────────────────────────────────────────────
+    this.onMessage('call_all_hands', (client: Client) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated) return
+        if (this.state.phase !== 'game') return
+        if (player.allHandsLeft <= 0) {
+          client.send('incident', { message: 'No all-hands calls remaining.', severity: 'warn', time: new Date().toISOString() })
+          return
         }
+        player.allHandsLeft -= 1
+        this.triggerAllHands(player.name)
+      } catch (err) {
+        console.error('[GameRoom] call_all_hands error:', err)
       }
+    })
+
+    // ── Vote ───────────────────────────────────────────────────────────────────
+    this.onMessage('vote', (client: Client, data: { targetId: string }) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated || player.isSpectator) return
+        if (this.state.phase !== 'meeting') return
+        if (this.votes.has(client.sessionId)) return  // already voted
+
+        const targetId = data.targetId
+        // Validate target is a real living player or 'skip'
+        if (targetId !== 'skip') {
+          const target = this.state.players.get(targetId)
+          if (!target || target.isEliminated) return
+        }
+
+        this.votes.set(client.sessionId, targetId)
+
+        // Check if all living players have voted
+        const livingPlayers = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
+        if (this.votes.size >= livingPlayers.length) {
+          this.resolveVote()
+        }
+      } catch (err) {
+        console.error('[GameRoom] vote error:', err)
+      }
+    })
+
+    // ── Perk vote ──────────────────────────────────────────────────────────────
+    this.onMessage('perk_vote', (client: Client, data: { perk: string }) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player || player.isEliminated) return
+        if (this.state.phase !== 'retro') return
+        this.perkVotes.set(client.sessionId, data.perk)
+      } catch (err) {
+        console.error('[GameRoom] perk_vote error:', err)
+      }
+    })
+
+    // ── Chat ───────────────────────────────────────────────────────────────────
+    this.onMessage('chat', (client: Client, data: { text: string }) => {
+      try {
+        const player = this.state.players.get(client.sessionId)
+        if (!player) return
+        if (this.state.phase !== 'meeting' && this.state.phase !== 'retro') return
+        const text = String(data.text ?? '').slice(0, 200)
+        this.broadcast('chat', { senderId: client.sessionId, name: player.name, text })
+      } catch (err) {
+        console.error('[GameRoom] chat error:', err)
+      }
+    })
+
+    // ── Bot tick ───────────────────────────────────────────────────────────────
+    this.clock.setInterval(() => {
+      this.tickBots()
     }, 200)
 
-    // ── Meter degradation ────────────────────────────────────────────────────
-    this.clock.setInterval(() => {
-      if (this.state.phase !== 'playing') return
-      const now = this.clock.currentTime
-      this.state.workforceMeter  = Math.max(0, this.state.workforceMeter  - 1)
-      this.state.oppositionMeter = Math.max(0, this.state.oppositionMeter - 1)
-      if (this.effects.extraOppDegradeUntil > now) {
-        this.state.oppositionMeter = Math.max(0, this.state.oppositionMeter - 1)
-      }
-      this.broadcast('meter_update', { workforce: this.state.workforceMeter, opposition: this.state.oppositionMeter })
-    }, METER_DEGRADE_INTERVAL_MS)
-
-    // ── Rack degradation ─────────────────────────────────────────────────────
-    this.clock.setInterval(() => {
-      if (this.state.phase !== 'playing') return
-      if (this.effects.rackDegradePausedUntil > this.clock.currentTime) return
-      this.state.rackHealthA = Math.max(0, this.state.rackHealthA - 1)
-      this.state.rackHealthB = Math.max(0, this.state.rackHealthB - 1)
-      this.state.rackHealthC = Math.max(0, this.state.rackHealthC - 1)
-    }, RACK_DEGRADE_INTERVAL_MS)
-
-    // ── Lockdown sync ────────────────────────────────────────────────────────
-    this.clock.setInterval(() => {
-      const locked = this.effects.lockdownUntil > this.clock.currentTime
-      if (this.state.lockdownActive !== locked) {
-        this.state.lockdownActive = locked
-        if (!locked) this.broadcastEffects()
-      }
-    }, 1_000)
-
-    const botCount = Math.min(Math.max(0, options.botCount ?? 0), 9)
-    if (botCount > 0) this.spawnBots(botCount)
-
-    console.log(`[GameRoom] Created · seed ${this.state.mapSeed} · bots ${botCount}`)
+    // ── Sprint second tick ─────────────────────────────────────────────────────
+    // Note: actual sprint timer is started by startSprint()
   }
 
-  // ── Task completion ───────────────────────────────────────────────────────
+  // ── Role & task assignment ─────────────────────────────────────────────────
+
+  private assignRolesAndTasks(allPlayers: Player[]) {
+    try {
+      // Spectators get no role or tasks
+      const activePlayers = allPlayers.filter(p => !p.isSpectator)
+      const shuffled = [...activePlayers].sort(() => Math.random() - 0.5)
+
+      // Pick one AI player (prefer human players)
+      const humans = shuffled.filter(p => !p.isBot)
+      const aiCandidate = humans.length > 0 ? humans[0] : shuffled[0]
+      this.aiSessionId = aiCandidate?.sessionId ?? null
+
+      // Assign rogue_ai personality to the AI bot if they are a bot
+      if (aiCandidate?.isBot) {
+        this.botPersonalities.set(aiCandidate.sessionId, 'rogue_ai')
+      }
+
+      const rolePool = [...WORKFORCE_ROLES]
+      let roleIdx = 0
+
+      for (const player of shuffled) {
+        const role: WorkforceRole = rolePool[roleIdx % rolePool.length] as WorkforceRole
+        roleIdx++
+        player.role = role
+
+        const taskIds = ROLE_TASK_MAP[role] ?? []
+
+        if (player.sessionId === this.aiSessionId) {
+          // AI player gets cover role tasks + phase 1 AI tasks
+          const phase1Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 1).map(t => t.id)
+          const assigned = [...taskIds, ...phase1Tasks]
+          this.assignedTasks.set(player.sessionId, assigned)
+
+          // Send normal role_assigned (cover role)
+          const roomClient = this.clients.find(c => c.sessionId === player.sessionId)
+          roomClient?.send('role_assigned', { role, assignedTasks: taskIds })
+
+          // Send private ai_briefing
+          roomClient?.send('ai_briefing', { phase: 1 as AiPhase, phaseTasks: phase1Tasks })
+        } else {
+          this.assignedTasks.set(player.sessionId, taskIds)
+          const roomClient = this.clients.find(c => c.sessionId === player.sessionId)
+          roomClient?.send('role_assigned', { role, assignedTasks: taskIds })
+        }
+      }
+    } catch (err) {
+      console.error('[GameRoom.assignRolesAndTasks] Error:', err)
+    }
+  }
+
+  // ── Task completion ────────────────────────────────────────────────────────
 
   private completeTask(sessionId: string, stationId: string) {
-    const station = this.stations.get(stationId)
-    const player  = this.state.players.get(sessionId)
-    if (!station || !player || station.completedBy) return
+    try {
+      const hold    = this.holdState.get(sessionId)
+      if (!hold || hold.stationId !== stationId) return
 
-    station.completedBy = sessionId
+      const player  = this.state.players.get(sessionId)
+      if (!player || player.isEliminated) return
 
-    const taskDef = station.info.taskId ? TASK_DEFS.find(t => t.id === station.info.taskId) : null
-    if (!taskDef) return
+      const stState = this.stations.get(stationId)
+      if (!stState || stState.completedBy || !stState.info.taskId) return
 
-    const now = this.clock.currentTime
+      const taskId = stState.info.taskId as TaskId
 
-    if (taskDef.meterGain > 0) {
-      if (player.faction === 'workforce') {
-        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + taskDef.meterGain)
-      } else {
-        const mult = this.effects.oppMeterGainMultUntil > now ? this.effects.oppMeterGainMult : 1.0
-        this.state.oppositionMeter = Math.min(100, this.state.oppositionMeter + taskDef.meterGain * mult)
-      }
-    }
+      // Verify player is still close enough and on the same floor
+      const dx = player.x - stState.info.x
+      const dz = player.z - stState.info.z
+      if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) return
+      if (player.floor !== stState.info.floor) return
 
-    this.applyTaskEffect(taskDef.id, sessionId, player)
+      stState.completedBy = sessionId
+      this.state.completedTasks.add(taskId)
+      this.holdState.delete(sessionId)
 
-    this.broadcast('task_complete', {
-      taskId:     taskDef.id,
-      role:       player.role,
-      effectDesc: taskDef.effectDesc,
-      meterGain:  taskDef.meterGain,
-    })
-    this.broadcast('meter_update', { workforce: this.state.workforceMeter, opposition: this.state.oppositionMeter })
-    this.broadcastEffects()
-    this.checkWinCondition()
+      // Track per-sprint progress
+      const prev = this.sprintPlayerDone.get(sessionId) ?? 0
+      this.sprintPlayerDone.set(sessionId, prev + 1)
+      this.state.sprintDone += 1
 
-    console.log(`[GameRoom] ${player.name} (${player.role}) completed: ${taskDef.id}`)
-  }
+      this.broadcast('task_complete', { taskId, playerName: player.name })
+      this.broadcastSprintUpdate()
 
-  private applyTaskEffect(taskId: TaskId, sessionId: string, player: Player) {
-    const now = this.clock.currentTime
-
-    switch (taskId) {
-      case 'it_repair_terminal':
-        this.effects.hackerCorruptionUntil = 0
-        break
-
-      case 'it_fix_server':
-        this.state.rackHealthA = Math.min(100, this.state.rackHealthA + 40)
-        this.effects.rackDegradePausedUntil = now + 180_000
-        break
-
-      case 'devops_ci_pipeline':
-        if (!this.effects.ciPipelineDisabled) {
-          this.effects.ciPipelineUntil = now + 90_000
-          this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
-        }
-        break
-
-      case 'devops_system_monitor':
-        this.state.players.forEach((p, sid) => {
-          if (p.role === 'admin' && p.connected && !p.isBot) {
-            const c = this.clients.find(cl => cl.sessionId === sid)
-            c?.send('monitor_snapshot', {
-              rackA: this.state.rackHealthA,
-              rackB: this.state.rackHealthB,
-              rackC: this.state.rackHealthC,
-            })
-          }
-        })
-        break
-
-      case 'hr_security_vetting':
-      case 'hr_policy_update':
-        this.effects.oppositionHoldSlowUntil = now + 90_000
-        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
-        break
-
-      case 'finance_budget_freeze':
-        this.effects.extraOppDegradeUntil = now + 120_000
-        break
-
-      case 'finance_audit_trail':
-        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + 8)
-        break
-
-      case 'marketing_pr_campaign':
-        this.effects.oppMeterGainMult      = 0.75
-        this.effects.oppMeterGainMultUntil = now + 90_000
-        this.clock.setTimeout(() => {
-          this.effects.oppMeterGainMult = 1.0
-          this.broadcastEffects()
-        }, 90_000)
-        break
-
-      case 'marketing_crisis_control':
-        if (this.effects.workforceHoldSlowUntil > now)  this.effects.workforceHoldSlowUntil  = 0
-        else if (this.effects.hackerCorruptionUntil > now) this.effects.hackerCorruptionUntil = 0
-        break
-
-      case 'admin_lockdown':
-        this.effects.lockdownUntil = now + 90_000
-        this.state.lockdownActive  = true
-        this.clock.setTimeout(() => {
-          this.state.lockdownActive = false
-          this.broadcastEffects()
-        }, 90_000)
-        break
-
-      case 'admin_keycard_audit': {
-        let lastOpp: Player | null = null
-        for (const p of this.state.players.values()) {
-          if (p.faction === 'opposition') { lastOpp = p; break }
-        }
-        const entry = lastOpp
-          ? `Badge activity detected — zone unknown — ${ts()}`
-          : 'No recent badge activity'
-        this.state.players.forEach((p, sid) => {
-          if (p.role === 'admin' && p.connected && !p.isBot) {
-            const c = this.clients.find(cl => cl.sessionId === sid)
-            c?.send('keycard_log', { entry })
-          }
-        })
-        break
+      // Check if AI phase task
+      const allTaskDefs = [...TASK_DEFS, ...AI_TASK_DEFS]
+      const td = allTaskDefs.find(t => t.id === taskId)
+      if (td?.category === 'ai') {
+        this.aiPhaseCompleted.add(taskId)
+        this.checkAiPhaseAdvance(sessionId)
       }
 
-      case 'mgmt_sprint_planning':
-        this.effects.workforceSpeedUntil = now + 90_000
-        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
-        break
-
-      case 'mgmt_resource_allocation':
-        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + 10)
-        break
-
-      case 'hacker_zero_day':
-        this.effects.hackerCorruptionUntil = now + 60_000
-        this.clock.setTimeout(() => this.broadcastEffects(), 60_000)
-        break
-
-      case 'hacker_network_attack':
-        for (const st of this.stations.values()) {
-          if (st.info.taskId === 'it_fix_server') st.disabledUntil = now + 180_000
-        }
-        break
-
-      case 'se_phishing': {
-        const wfPlayers = Array.from(this.state.players.values())
-          .filter(p => p.faction === 'workforce' && p.connected)
-        if (wfPlayers.length > 0) {
-          const target = wfPlayers[Math.floor(Math.random() * wfPlayers.length)]
-          target.slowed = true
-          this.clock.setTimeout(() => { target.slowed = false }, 60_000)
-        }
-        break
-      }
-
-      case 'se_impersonation':
-        player.disguised = true
-        this.clock.setTimeout(() => { player.disguised = false }, 180_000)
-        break
-
-      case 'spy_intercept': {
-        let lastZone = 'unknown'
-        for (const st of this.stations.values()) {
-          if (st.completedBy) {
-            const completer = this.state.players.get(st.completedBy)
-            if (completer?.faction === 'workforce') lastZone = st.info.zone
-          }
-        }
-        this.state.players.forEach((p, sid) => {
-          if (p.faction === 'opposition' && p.connected && !p.isBot) {
-            const c = this.clients.find(cl => cl.sessionId === sid)
-            c?.send('incident', {
-              message: `Intel: Last workforce task in ${lastZone.replace('_', ' ')}`,
-              severity: 'info', time: ts(),
-            })
-          }
-        })
-        break
-      }
-
-      case 'spy_surveillance': {
-        let target: { x: number; z: number } | null = null
-        for (const p of this.state.players.values()) {
-          if (p.faction === 'workforce') { target = { x: p.x, z: p.z }; break }
-        }
-        if (target) {
-          const c = this.clients.find(cl => cl.sessionId === sessionId)
-          c?.send('ghost_camera', { targetX: target.x, targetZ: target.z, duration: 30_000 })
-        }
-        break
-      }
-
-      case 'saboteur_server_logs': {
-        const c = this.clients.find(cl => cl.sessionId === sessionId)
-        c?.send('monitor_snapshot', {
-          rackA: this.state.rackHealthA,
-          rackB: this.state.rackHealthB,
-          rackC: this.state.rackHealthC,
-        })
-        break
-      }
-
-      case 'saboteur_power_cut':
-        this.effects.workforceHoldSlowUntil = now + 90_000
-        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
-        break
-
-      case 'insider_leak_docs':
-        this.state.workforceMeter = Math.max(0, this.state.workforceMeter - 8)
-        break
-
-      case 'insider_corrupt_backups':
-        this.effects.ciPipelineDisabled = true
-        this.effects.ciPipelineUntil    = 0
-        break
+      // Check win conditions
+      this.checkWinConditions()
+    } catch (err) {
+      console.error('[GameRoom.completeTask] Error:', err)
     }
   }
 
-  private broadcastEffects() {
-    const now = this.clock.currentTime
-    this.broadcast('effect_update', {
-      workforceSpeedActive: this.effects.workforceSpeedUntil > now,
-      lockdownActive:       this.effects.lockdownUntil > now,
-      workforceHoldSlow:    this.effects.workforceHoldSlowUntil > now,
-      oppositionHoldSlow:   this.effects.oppositionHoldSlowUntil > now,
-      hackerCorruption:     this.effects.hackerCorruptionUntil > now,
-      ciPipelineActive:     !this.effects.ciPipelineDisabled && this.effects.ciPipelineUntil > now,
-      badgeRenewalRequired: false,
-    })
+  // ── AI phase progression ───────────────────────────────────────────────────
+
+  private checkAiPhaseAdvance(aiSessionId: string) {
+    try {
+      const currentPhaseTasks = AI_TASK_DEFS.filter(t => t.aiPhase === this.aiPhase)
+      const allCurrentDone    = currentPhaseTasks.every(t => this.aiPhaseCompleted.has(t.id))
+      if (!allCurrentDone) return
+
+      if (this.aiPhase < 3) {
+        const nextPhase = (this.aiPhase + 1) as AiPhase
+        this.aiPhase    = nextPhase
+        const newTasks  = AI_TASK_DEFS.filter(t => t.aiPhase === nextPhase).map(t => t.id)
+
+        // Update assigned tasks for AI player
+        const existing = this.assignedTasks.get(aiSessionId) ?? []
+        this.assignedTasks.set(aiSessionId, [...existing, ...newTasks])
+
+        const aiClient = this.clients.find(c => c.sessionId === aiSessionId)
+        aiClient?.send('ai_briefing', { phase: nextPhase, phaseTasks: newTasks })
+
+        // Phase 2 flicker effect
+        if (nextPhase === 2) {
+          const zones: ZoneId[] = ['server_room', 'devops_den', 'finance_floor']
+          for (const zone of zones) {
+            this.broadcast('phase2_flicker', { zone })
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[GameRoom.checkAiPhaseAdvance] Error:', err)
+    }
   }
 
-  // ── Bot spawning ──────────────────────────────────────────────────────────
+  // ── Sprint management ──────────────────────────────────────────────────────
 
-  private spawnBots(count: number) {
-    for (let i = 0; i < count; i++) {
-      const bot     = new Player()
-      bot.sessionId = `bot_${i}`
-      bot.name      = BOT_NAMES[i] ?? `BOT-${i}`
-      bot.isBot     = true
-      bot.connected = true
-      bot.x         = (Math.random() - 0.5) * 16
-      bot.z         = (Math.random() - 0.5) * 12
-      bot.facing    = Math.random() * Math.PI * 2
-      this.state.players.set(bot.sessionId, bot)
-      this.assignRole(bot)
-      this.broadcast('incident', {
-        message: `${bot.name} connected — ${bot.role}/${bot.faction} [BOT]`,
-        severity: 'info', time: ts(),
+  private startSprint(sprintNum: number) {
+    try {
+      if (this.sprintTimer) this.sprintTimer.clear()
+
+      this.state.phase       = 'game'
+      this.state.sprintNumber = sprintNum
+
+      const livingWorkers = Array.from(this.state.players.values()).filter(p => !p.isEliminated).length
+      const size = (this.state.sprintSize as 'small' | 'medium' | 'large') ?? 'medium'
+      this.state.sprintQuota  = sprintQuota(livingWorkers, size)
+      this.state.sprintDone   = 0
+      this.state.sprintTimeLeft = Math.floor(SPRINT_DURATION_MS / 1000)
+      this.sprintPlayerDone.clear()
+
+      this.broadcastSprintUpdate()
+
+      // 1-second tick
+      this.sprintTimer = this.clock.setInterval(() => {
+        try {
+          if (this.state.phase !== 'game') return
+          this.state.sprintTimeLeft = Math.max(0, this.state.sprintTimeLeft - 1)
+          if (this.state.sprintTimeLeft <= 0) {
+            this.endSprint(false)
+          }
+        } catch (err) {
+          console.error('[GameRoom] sprint tick error:', err)
+        }
+      }, 1000)
+    } catch (err) {
+      console.error('[GameRoom.startSprint] Error:', err)
+    }
+  }
+
+  private endSprint(quotaMet: boolean) {
+    try {
+      if (this.sprintTimer) {
+        this.sprintTimer.clear()
+        this.sprintTimer = null
+      }
+      this.state.phase = 'retro'
+
+      const stats = Array.from(this.state.players.values()).map(p => ({
+        sessionId: p.sessionId,
+        name:      p.name,
+        completed: this.sprintPlayerDone.get(p.sessionId) ?? 0,
+      }))
+
+      this.broadcast('retro_start', {
+        sprint:   this.state.sprintNumber,
+        quotaMet,
+        stats,
       })
-    }
 
-    this.clock.setInterval(() => {
-      if (this.state.phase !== 'playing') {
-        // Pre-game wander
-        this.state.players.forEach(p => {
-          if (!p.isBot) return
-          p.x = clamp(p.x + (Math.random() - 0.5) * 1.0, -11.5, 11.5)
-          p.z = clamp(p.z + (Math.random() - 0.5) * 1.0, -15.5,  9.0)
-          p.facing = Math.random() * Math.PI * 2
-        })
+      // Workers win if quota met in all sprints
+      if (quotaMet && this.state.sprintNumber >= SPRINT_COUNT) {
+        this.endGame('workforce', 'All sprint quotas met — Rogue AI contained!')
         return
       }
 
-      const now = this.clock.currentTime
-      this.state.players.forEach(p => {
-        if (!p.isBot) return
-        let ai = this.botAI.get(p.sessionId) ?? { mode: 'wander' as const, workUntil: 0, targetStation: null }
-
-        if (ai.mode === 'work' && ai.targetStation) {
-          const st = this.stations.get(ai.targetStation)
-          if (!st || st.completedBy || now > ai.workUntil) {
-            ai = { mode: 'wander', workUntil: 0, targetStation: null }
-            this.holdState.delete(p.sessionId)
+      // After retro, resolve perk and start next sprint (45s for retro)
+      this.clock.setTimeout(() => {
+        try {
+          this.resolvePerkVote()
+          if (this.state.sprintNumber < SPRINT_COUNT) {
+            this.startSprint(this.state.sprintNumber + 1)
           } else {
-            const dx   = st.info.x - p.x
-            const dz   = st.info.z - p.z
-            const dist = Math.sqrt(dx * dx + dz * dz)
-            if (dist > INTERACT_R * 0.6) {
-              // Walk toward station — max 1.2 units per 500 ms tick (~2.4 u/s)
-              const step = Math.min(dist, 1.2)
-              p.x      = clamp(p.x + (dx / dist) * step, -11.5, 11.5)
-              p.z      = clamp(p.z + (dz / dist) * step, -15.5,  9.0)
-              p.facing = Math.atan2(dx, dz)
-            } else if (!this.holdState.has(p.sessionId)) {
-              // In range — start hold using the actual task's holdMs
-              const taskDef = st.info.taskId ? TASK_DEFS.find(t => t.id === st.info.taskId) : null
-              const holdMs  = taskDef?.holdMs ?? 4000
-              this.holdState.set(p.sessionId, { stationId: ai.targetStation, startedAt: now, holdMs })
+            this.endGame('ai', 'Sprint quotas not met — Rogue AI succeeded!')
+          }
+        } catch (err) {
+          console.error('[GameRoom] post-retro error:', err)
+        }
+      }, 45_000)
+    } catch (err) {
+      console.error('[GameRoom.endSprint] Error:', err)
+    }
+  }
+
+  // ── All Hands (meeting) ────────────────────────────────────────────────────
+
+  private triggerAllHands(calledBy: string, bodyId?: string) {
+    try {
+      if (this.state.phase !== 'game') return
+      if (this.sprintTimer) {
+        this.sprintTimer.clear()
+        this.sprintTimer = null
+      }
+      this.state.phase = 'meeting'
+      this.votes.clear()
+
+      this.broadcast('all_hands_start', { calledBy, bodyId })
+
+      // Schedule bot meeting chat
+      this.scheduleBotMeetingChat()
+
+      // 60-second auto-resolve (then bots vote if they haven't)
+      if (this.allHandsTimeout) this.allHandsTimeout.clear()
+      this.allHandsTimeout = this.clock.setTimeout(() => {
+        if (this.state.phase === 'meeting') {
+          this.scheduleBotVotes(0)  // immediate votes
+          this.clock.setTimeout(() => this.resolveVote(), 3000)
+        }
+      }, 60_000)
+    } catch (err) {
+      console.error('[GameRoom.triggerAllHands] Error:', err)
+    }
+  }
+
+  private resolveVote() {
+    try {
+      if (this.allHandsTimeout) {
+        this.allHandsTimeout.clear()
+        this.allHandsTimeout = null
+      }
+
+      const tally = new Map<string, number>()
+      for (const [, target] of this.votes) {
+        if (target === 'skip') continue
+        tally.set(target, (tally.get(target) ?? 0) + 1)
+      }
+
+      let ejected:   string | null = null
+      let maxVotes   = 0
+      for (const [target, count] of tally) {
+        if (count > maxVotes) {
+          maxVotes = count
+          ejected  = target
+        }
+      }
+
+      // Ties result in no ejection
+      const topCount = Array.from(tally.values()).filter(v => v === maxVotes).length
+      if (topCount > 1) ejected = null
+
+      let wasAi = false
+      if (ejected) {
+        const target = this.state.players.get(ejected)
+        if (target) {
+          wasAi             = ejected === this.aiSessionId
+          target.isEliminated = true
+        }
+      }
+
+      this.broadcast('all_hands_vote_result', {
+        ejected,
+        wasAi,
+        votes: Object.fromEntries(this.votes),
+      })
+
+      this.votes.clear()
+
+      // Workers win if AI was ejected
+      if (wasAi) {
+        this.endGame('workforce', 'Rogue AI identified and removed!')
+        return
+      }
+
+      this.checkWinConditions()
+      if (this.state.phase !== 'end') {
+        // Resume sprint after 5s
+        this.clock.setTimeout(() => {
+          const currentSprint = this.state.sprintNumber
+          const timeLeft      = this.state.sprintTimeLeft
+          if (timeLeft > 0) {
+            this.startSprint(currentSprint)  // restarts with leftover time logic
+          } else {
+            this.endSprint(this.state.sprintDone >= this.state.sprintQuota)
+          }
+        }, 5000)
+      }
+    } catch (err) {
+      console.error('[GameRoom.resolveVote] Error:', err)
+    }
+  }
+
+  // ── Bot meeting chat & voting ───────────────────────────────────────────────────
+
+  private scheduleBotMeetingChat() {
+    try {
+      const bots = Array.from(this.state.players.values()).filter(p => p.isBot && !p.isEliminated && !p.isSpectator)
+      const living = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
+      const otherNames = living.map(p => p.name)
+
+      for (const bot of bots) {
+        const personality = this.botPersonalities.get(bot.sessionId) ?? 'chaotic'
+        const pDef = PERSONALITIES[personality]
+        const [minFirst, maxFirst] = pDef.firstSpeakDelay
+
+        // Each bot sends 1-3 messages during the chat phase
+        const msgCount = 1 + Math.floor(Math.random() * 2)
+
+        for (let m = 0; m < msgCount; m++) {
+          // Stagger messages so they don't all come at once
+          const delay = minFirst + Math.random() * (maxFirst - minFirst) + (m * 8000)
+          // Don't exceed 50s (stay within chat phase)
+          if (delay > 50_000) continue
+
+          this.clock.setTimeout(() => {
+            try {
+              if (this.state.phase !== 'meeting') return
+              if (bot.isEliminated) return
+
+              // Pick message type based on position in sequence
+              const linePool = m === 0
+                ? pDef.lines.opening
+                : (Math.random() < 0.5 ? pDef.lines.accuse : pDef.lines.wild)
+
+              const template = linePool[Math.floor(Math.random() * linePool.length)]
+              const targetName = otherNames.filter(n => n !== bot.name)[Math.floor(Math.random() * Math.max(1, otherNames.length - 1))]
+              const text = fillTemplate(template, { name: targetName ?? 'someone', self: bot.name })
+
+              this.broadcast('chat', { senderId: bot.sessionId, name: bot.name, text })
+            } catch (err) {
+              console.error(`[GameRoom] Bot chat error (${bot.name}):`, err)
+            }
+          }, delay)
+        }
+
+        // Schedule bot vote
+        const [minVote, maxVote] = pDef.voteDelay
+        const voteDelay = minVote + Math.random() * (maxVote - minVote)
+        this.clock.setTimeout(() => {
+          this.castBotVote(bot.sessionId)
+        }, voteDelay)
+      }
+    } catch (err) {
+      console.error('[GameRoom.scheduleBotMeetingChat] Error:', err)
+    }
+  }
+
+  private scheduleBotVotes(extraDelay: number) {
+    // Used when auto-resolve kicks in — ensure all unvoted bots vote immediately
+    const bots = Array.from(this.state.players.values()).filter(p => p.isBot && !p.isEliminated && !p.isSpectator)
+    for (const bot of bots) {
+      if (!this.votes.has(bot.sessionId)) {
+        this.clock.setTimeout(() => this.castBotVote(bot.sessionId), extraDelay + Math.random() * 1500)
+      }
+    }
+  }
+
+  private castBotVote(sessionId: string) {
+    try {
+      if (this.state.phase !== 'meeting') return
+      if (this.votes.has(sessionId)) return  // already voted
+
+      const player = this.state.players.get(sessionId)
+      if (!player || player.isEliminated) return
+
+      const personality = this.botPersonalities.get(sessionId) ?? 'chaotic'
+      const pDef = PERSONALITIES[personality]
+      const living = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator && p.sessionId !== sessionId)
+
+      let target: string = 'skip'
+
+      if (living.length > 0) {
+        switch (pDef.voteBias) {
+          case 'random':
+            target = living[Math.floor(Math.random() * living.length)].sessionId
+            break
+
+          case 'most_active': {
+            // Vote for the player with the most tasks done (they're suspicious)
+            const sorted = living.slice().sort((a, b) =>
+              (this.sprintPlayerDone.get(b.sessionId) ?? 0) - (this.sprintPlayerDone.get(a.sessionId) ?? 0)
+            )
+            target = sorted[0].sessionId
+            break
+          }
+
+          case 'least_active': {
+            // Vote for the most inactive player
+            const sorted = living.slice().sort((a, b) =>
+              (this.sprintPlayerDone.get(a.sessionId) ?? 0) - (this.sprintPlayerDone.get(b.sessionId) ?? 0)
+            )
+            target = sorted[0].sessionId
+            break
+          }
+
+          case 'last_speaker': {
+            // Pick randomly from living (simulates remembering last speaker)
+            target = living[Math.floor(Math.random() * living.length)].sessionId
+            break
+          }
+
+          case 'copy_human': {
+            // Find a vote already cast by a human and copy it
+            const humanVote = Array.from(this.votes.entries())
+              .find(([voter]) => !this.state.players.get(voter)?.isBot)
+            if (humanVote) {
+              target = humanVote[1]
+            } else {
+              target = living[Math.floor(Math.random() * living.length)].sessionId
+            }
+            break
+          }
+
+          case 'strategic': {
+            // Rogue AI: vote for the most methodical/suspicious workforce member to frame them
+            // Avoid voting for itself; prefer voting for the player with most tasks done
+            const workers = living.filter(p => p.sessionId !== this.aiSessionId)
+            if (workers.length > 0) {
+              const sorted = workers.slice().sort((a, b) =>
+                (this.sprintPlayerDone.get(b.sessionId) ?? 0) - (this.sprintPlayerDone.get(a.sessionId) ?? 0)
+              )
+              target = sorted[0].sessionId
+            } else {
+              target = 'skip'
+            }
+            break
+          }
+        }
+      }
+
+      this.votes.set(sessionId, target)
+
+      // Announce vote via chat (from vote lines)
+      const voteLines = pDef.lines.vote
+      if (voteLines.length > 0 && target !== 'skip') {
+        const targetPlayer = this.state.players.get(target)
+        if (targetPlayer) {
+          const template = voteLines[Math.floor(Math.random() * voteLines.length)]
+          const text = fillTemplate(template, { name: targetPlayer.name, self: player.name })
+          this.broadcast('chat', { senderId: sessionId, name: player.name, text })
+        }
+      }
+
+      // Check if all living players have voted
+      const livingPlayers = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
+      if (this.votes.size >= livingPlayers.length) {
+        this.clock.setTimeout(() => this.resolveVote(), 1500)
+      }
+    } catch (err) {
+      console.error(`[GameRoom.castBotVote] Error (${sessionId}):`, err)
+    }
+  }
+
+  // ── Perk vote resolution ───────────────────────────────────────────────────
+
+  private resolvePerkVote() {
+    try {
+      if (this.perkVotes.size === 0) return
+      const tally = new Map<string, number>()
+      for (const [, perk] of this.perkVotes) {
+        tally.set(perk, (tally.get(perk) ?? 0) + 1)
+      }
+      let winner = '', best = 0
+      for (const [perk, count] of tally) {
+        if (count > best) { best = count; winner = perk }
+      }
+      if (winner) {
+        this.activePerk = winner
+        this.broadcast('perk_awarded', { perk: winner })
+      }
+      this.perkVotes.clear()
+    } catch (err) {
+      console.error('[GameRoom.resolvePerkVote] Error:', err)
+    }
+  }
+
+  // ── Win condition check ────────────────────────────────────────────────────
+
+  private checkWinConditions() {
+    try {
+      const living = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
+
+      // AI wins: only ≤1 living worker (besides AI)
+      const livingWorkers = living.filter(p => p.sessionId !== this.aiSessionId)
+      if (livingWorkers.length <= 1) {
+        this.endGame('ai', 'Workforce neutralised — Rogue AI takeover complete!')
+        return
+      }
+
+      // AI wins: all Phase 3 tasks completed
+      const phase3Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 3)
+      if (phase3Tasks.every(t => this.aiPhaseCompleted.has(t.id))) {
+        this.endGame('ai', 'Rogue AI takeover sequence completed!')
+        return
+      }
+    } catch (err) {
+      console.error('[GameRoom.checkWinConditions] Error:', err)
+    }
+  }
+
+  private endGame(winner: 'workforce' | 'ai', reason: string) {
+    try {
+      if (this.sprintTimer)    this.sprintTimer.clear()
+      if (this.allHandsTimeout) this.allHandsTimeout.clear()
+      this.state.phase    = 'end'
+      this.state.winner   = winner
+      this.state.winReason = reason
+      this.broadcast('game_end', { winner, reason })
+    } catch (err) {
+      console.error('[GameRoom.endGame] Error:', err)
+    }
+  }
+
+  // ── Sprint update broadcast ────────────────────────────────────────────────
+
+  private broadcastSprintUpdate() {
+    try {
+      this.broadcast('sprint_update', {
+        info: {
+          sprint:    this.state.sprintNumber,
+          quota:     this.state.sprintQuota,
+          completed: this.state.sprintDone,
+          timeLeft:  this.state.sprintTimeLeft,
+          size:      this.state.sprintSize,
+        },
+      })
+    } catch (err) {
+      console.error('[GameRoom.broadcastSprintUpdate] Error:', err)
+    }
+  }
+
+  // ── Bot AI ─────────────────────────────────────────────────────────────────
+
+  private tickBots() {
+    try {
+      if (this.state.phase !== 'game') return
+      const now = Date.now()
+
+      for (const [sessionId, ai] of this.botAI) {
+        try {
+          const player = this.state.players.get(sessionId)
+          if (!player || player.isEliminated) continue
+
+          if (ai.mode === 'wander' || now > ai.workUntil) {
+            // Find an incomplete station for a task assigned to this bot
+            const botTasks = this.assignedTasks.get(sessionId) ?? []
+            const stationList = Array.from(this.stations.values())
+            const available = stationList.filter(st =>
+              st.info.taskId &&
+              botTasks.includes(st.info.taskId as TaskId) &&
+              !st.completedBy
+            )
+            if (available.length > 0) {
+              const target = available[Math.floor(Math.random() * available.length)]
+              ai.mode          = 'work'
+              ai.targetStation = target.info.stationId
+              const allTaskDefs2 = [...TASK_DEFS, ...AI_TASK_DEFS]
+              const holdMs = allTaskDefs2.find(t => t.id === target.info.taskId)?.holdMs ?? 5000
+              ai.workUntil     = now + holdMs + 2000
+
+              // Teleport bot to station (server-authoritative position)
+              player.x     = target.info.x
+              player.z     = target.info.z
+              player.floor = target.info.floor
+
+              // Queue completion
+              this.holdState.set(sessionId, {
+                stationId: target.info.stationId,
+                startedAt: now,
+                holdMs,
+              })
+              this.clock.setTimeout(() => {
+                this.completeTask(sessionId, target.info.stationId)
+              }, holdMs)
+            } else {
+              ai.mode = 'wander'
             }
           }
-        } else {
-          // Always find the nearest eligible station (no random 25% gate)
-          const myTaskIds = new Set(
-            TASK_DEFS.filter(t => t.role === (p.role as PlayerRole)).map(t => t.id)
-          )
-          let best: StationState | null = null
-          let bestDist = Infinity
-          for (const st of this.stations.values()) {
-            if (st.completedBy || !st.info.taskId || !myTaskIds.has(st.info.taskId)) continue
-            if (st.disabledUntil > now) continue
-            const dx = st.info.x - p.x
-            const dz = st.info.z - p.z
-            const d  = dx * dx + dz * dz
-            if (d < bestDist) { bestDist = d; best = st }
-          }
-          if (best) {
-            ai = { mode: 'work', workUntil: now + 45_000, targetStation: best.info.stationId }
-          } else {
-            // Nothing left to do — gentle wander
-            p.x = clamp(p.x + (Math.random() - 0.5) * 1.0, -11.5, 11.5)
-            p.z = clamp(p.z + (Math.random() - 0.5) * 1.0, -15.5,  9.0)
-            p.facing = Math.random() * Math.PI * 2
-          }
+        } catch (botErr) {
+          console.error(`[GameRoom] Bot ${sessionId} tick error:`, botErr)
         }
-
-        this.botAI.set(p.sessionId, ai)
-      })
-    }, 500)
-  }
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
-
-  onJoin(client: Client, options: { name?: string }) {
-    const player     = new Player()
-    player.sessionId = client.sessionId
-    player.name      = (options.name ?? `Operative-${client.sessionId.slice(0, 4)}`).slice(0, 20)
-    this.state.players.set(client.sessionId, player)
-    this.assignRole(player)
-    client.send('role_assigned', { role: player.role, faction: player.faction })
-    this.broadcast('incident', {
-      message: `${player.name} connected — ${player.role}/${player.faction}`,
-      severity: 'info', time: ts(),
-    })
-    console.log(`[GameRoom] ${player.name} joined as ${player.role} (${player.faction})`)
-  }
-
-  async onLeave(client: Client, consented: boolean) {
-    const player = this.state.players.get(client.sessionId)
-    if (!player) return
-    player.connected = false
-    this.holdState.delete(client.sessionId)
-    if (!consented) {
-      try {
-        await this.allowReconnection(client, 10)
-        player.connected = true
-        return
-      } catch { /* expired */ }
-    }
-    this.broadcast('incident', { message: `${player.name} disconnected`, severity: 'warn', time: ts() })
-    this.state.players.delete(client.sessionId)
-    this.checkWinCondition()
-  }
-
-  onDispose() {
-    console.log(`[GameRoom] ${this.roomId} disposed`)
-  }
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  private assignRole(player: Player) {
-    const all             = Array.from(this.state.players.values())
-    const oppCount        = all.filter(p => p.faction === 'opposition').length
-    const assignOpp       = all.length > 2 && oppCount / all.length < OPPOSITION_RATIO
-    if (assignOpp) {
-      player.faction = 'opposition'
-      player.role    = OPPOSITION_ROLES[Math.floor(Math.random() * OPPOSITION_ROLES.length)]
-    } else {
-      player.faction = 'workforce'
-      player.role    = WORKFORCE_ROLES[Math.floor(Math.random() * WORKFORCE_ROLES.length)]
+      }
+    } catch (err) {
+      console.error('[GameRoom.tickBots] Error:', err)
     }
   }
-
-  private checkWinCondition() {
-    if (this.state.phase !== 'playing') return
-    if (this.state.workforceMeter  >= 100) this.endGame('workforce',  'All workforce tasks complete!')
-    if (this.state.oppositionMeter >= 100) this.endGame('opposition', 'All opposition tasks complete!')
-  }
-
-  private endGame(winner: string, reason: string) {
-    this.state.phase  = 'ended'
-    this.state.winner = winner
-    this.broadcast('game_end', { winner, reason })
-    console.log(`[GameRoom] Game ended — ${winner} wins: ${reason}`)
-    this.clock.setTimeout(() => this.disconnect(), 30_000)
-  }
-}
-
-function ts() {
-  return new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })
-}
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v))
 }

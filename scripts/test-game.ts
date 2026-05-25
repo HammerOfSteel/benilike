@@ -9,11 +9,12 @@
  *   npm run test:game -- --visual           → print ASCII grid
  *   npm run test:game -- --floor 1          → visual for floor 1
  *
- * Suites: mapgen | tasks | collision | all (default)
+ * Suites: mapgen | tasks | collision | types | gamelogic | all (default)
  */
 
 import { generateMapData, isWalkable, CELL_SIZE, FLOOR_HEIGHT } from '../shared/src/mapgen'
-import { assignStations }                                        from '../shared/src/tasks'
+import { assignStations, TASK_DEFS, AI_TASK_DEFS, ROLE_TASK_MAP, sprintQuota } from '../shared/src/tasks'
+import { WORKFORCE_ROLES, SPRINT_DURATION_MS, SPRINT_COUNT } from '../shared/src/types'
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 const C = {
@@ -226,18 +227,31 @@ function suiteCollision() {
 function suiteTasks() {
   head('TASKS SUITE')
 
-  const TASK_DEFS_SAMPLE = [
-    { id: 'it_repair_terminal' as const, role: 'it' as const, name: 'Repair Terminal', zone: 'main_office' as const, holdMs: 3000, meterGain: 14, effectDesc: 'system restored' },
-    { id: 'devops_ci_pipeline' as const, role: 'devops' as const, name: 'CI Pipeline', zone: 'devops_den' as const, holdMs: 4000, meterGain: 14, effectDesc: 'pipeline active' },
-    { id: 'hacker_zero_day'   as const, role: 'hacker' as const, name: 'Zero Day',    zone: 'server_room' as const, holdMs: 5000, meterGain: 14, effectDesc: 'system breached' },
-  ]
+  sub('TASK_DEFS shape')
+  assert('TASK_DEFS non-empty',                        TASK_DEFS.length > 0,                    `got ${TASK_DEFS.length}`)
+  assert('all TASK_DEFS have category=workforce',      TASK_DEFS.every(t => t.category === 'workforce'))
+  assert('all TASK_DEFS have assignedTo array',        TASK_DEFS.every(t => Array.isArray(t.assignedTo) && t.assignedTo.length > 0))
+  assert('no TASK_DEFS have aiPhase',                  TASK_DEFS.every(t => !t.aiPhase))
+  info(`workforce tasks: ${TASK_DEFS.length} (${TASK_DEFS.map(t => t.id).join(', ')})`)
 
-  sub('assignStations with pre-generated mapData')
+  sub('AI_TASK_DEFS shape')
+  assert('AI_TASK_DEFS non-empty',                     AI_TASK_DEFS.length > 0,                 `got ${AI_TASK_DEFS.length}`)
+  assert('all AI_TASK_DEFS have category=ai',          AI_TASK_DEFS.every(t => t.category === 'ai'))
+  assert('all AI_TASK_DEFS have aiPhase 1-3',          AI_TASK_DEFS.every(t => t.aiPhase !== undefined && [1,2,3].includes(t.aiPhase!)))
+  const ph1 = AI_TASK_DEFS.filter(t => t.aiPhase === 1)
+  const ph2 = AI_TASK_DEFS.filter(t => t.aiPhase === 2)
+  const ph3 = AI_TASK_DEFS.filter(t => t.aiPhase === 3)
+  info(`AI tasks: phase1=${ph1.length}, phase2=${ph2.length}, phase3=${ph3.length}`)
+  assert('AI phase 1 tasks >= 1',                      ph1.length >= 1)
+  assert('AI phase 2 tasks >= 1',                      ph2.length >= 1)
+  assert('AI phase 3 tasks >= 1',                      ph3.length >= 1)
+
+  sub('assignStations with real TASK_DEFS')
   const md = generateMapData(SEED, SIZE)
 
   let stations: ReturnType<typeof assignStations>
   try {
-    stations = assignStations(SEED, SIZE, TASK_DEFS_SAMPLE as any, md)
+    stations = assignStations(SEED, SIZE, TASK_DEFS, md)
   } catch (e) {
     fail(`assignStations threw: ${(e as Error).message}`)
     console.error((e as Error).stack)
@@ -248,26 +262,75 @@ function suiteTasks() {
   assert('stations array non-empty',         stations.length > 0,                         `got ${stations.length}`)
   assert('each station has stationId',       stations.every(s => !!s.stationId))
   assert('each station has x and z coords', stations.every(s => isFinite(s.x) && isFinite(s.z)))
-  info(`assigned ${stations.length} station(s):`)
+  info(`assigned ${stations.length} station(s):`) 
   for (const s of stations) {
     const flTag = (s as any).floor !== undefined ? ` fl=${(s as any).floor}` : ''
     info(`  ${C.gray}${s.stationId}${C.reset} zone=${s.zone} task=${s.taskId}${flTag} pos=(${s.x.toFixed(1)},${s.z.toFixed(1)})`)
   }
 
   sub('assignStations determinism')
-  const st2 = assignStations(SEED, SIZE, TASK_DEFS_SAMPLE as any, md)
+  const st2 = assignStations(SEED, SIZE, TASK_DEFS, md)
   assert('same seed → same station positions', stations.every((s, i) =>
     s.x === st2[i].x && s.z === st2[i].z && s.stationId === st2[i].stationId
   ))
 
   sub('assignStations without pre-generated mapData (generates internally)')
   try {
-    const stAuto = assignStations(SEED, SIZE, TASK_DEFS_SAMPLE as any)
+    const stAuto = assignStations(SEED, SIZE, TASK_DEFS)
     assert('auto-generated stations non-empty', stAuto.length > 0)
   } catch (e) {
     fail(`assignStations (auto mapData) threw: ${(e as Error).message}`)
     console.error((e as Error).stack)
     failed++
+  }
+}
+
+// ── Suite: types ──────────────────────────────────────────────────────────────
+function suiteTypes() {
+  head('TYPES SUITE')
+
+  sub('WORKFORCE_ROLES')
+  assert('WORKFORCE_ROLES.length === 7', WORKFORCE_ROLES.length === 7, `got ${WORKFORCE_ROLES.length}`)
+  assert('WORKFORCE_ROLES are all strings', WORKFORCE_ROLES.every(r => typeof r === 'string'))
+  info(`roles: ${WORKFORCE_ROLES.join(', ')}`)
+
+  sub('SPRINT constants')
+  assert('SPRINT_DURATION_MS === 180000', SPRINT_DURATION_MS === 180_000)
+  assert('SPRINT_COUNT === 3', SPRINT_COUNT === 3)
+}
+
+// ── Suite: game logic ─────────────────────────────────────────────────────────
+function suiteGameLogic() {
+  head('GAME LOGIC SUITE')
+
+  sub('sprintQuota')
+  assert('sprintQuota(6, small) >= 2',   sprintQuota(6, 'small')  >= 2)
+  assert('sprintQuota(6, small) result',  sprintQuota(6, 'small')  === Math.max(2, Math.round(6 * 1.5)))
+  assert('sprintQuota(6, medium) result', sprintQuota(6, 'medium') === Math.max(2, Math.round(6 * 2)))
+  assert('sprintQuota(6, large) result',  sprintQuota(6, 'large')  === Math.max(2, Math.round(6 * 2.5)))
+  assert('sprintQuota(0, small) >= 2',   sprintQuota(0, 'small')  >= 2, 'min 2 even with 0 workers')
+  info(`quota(6,s)=${sprintQuota(6,'small')} quota(6,m)=${sprintQuota(6,'medium')} quota(6,l)=${sprintQuota(6,'large')}`)
+
+  sub('ROLE_TASK_MAP coverage')
+  for (const role of WORKFORCE_ROLES) {
+    const tasks = ROLE_TASK_MAP[role] ?? []
+    assert(`${role} has tasks`, tasks.length > 0, `got ${tasks.length}`)
+    assert(`${role} has >=2 tasks`, tasks.length >= 2, `got ${tasks.length}`)
+    info(`${role}: ${tasks.join(', ')}`)
+  }
+
+  sub('ROLE_TASK_MAP IDs exist in TASK_DEFS')
+  const allTaskIds = new Set(TASK_DEFS.map(t => t.id))
+  for (const role of WORKFORCE_ROLES) {
+    for (const taskId of (ROLE_TASK_MAP[role] ?? [])) {
+      assert(`${role}.${taskId} in TASK_DEFS`, allTaskIds.has(taskId as any))
+    }
+  }
+
+  sub('All WORKFORCE_ROLES appear in ROLE_TASK_MAP')
+  const mapKeys = Object.keys(ROLE_TASK_MAP)
+  for (const role of WORKFORCE_ROLES) {
+    assert(`${role} in ROLE_TASK_MAP`, mapKeys.includes(role))
   }
 }
 
@@ -347,6 +410,8 @@ const run = (name: string, fn: () => void) => {
 run('mapgen',    suiteMapgen)
 run('collision', suiteCollision)
 run('tasks',     suiteTasks)
+run('types',     suiteTypes)
+run('gamelogic', suiteGameLogic)
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log(`\n${C.bold}${'─'.repeat(40)}${C.reset}`)

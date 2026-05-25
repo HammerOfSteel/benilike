@@ -1,12 +1,13 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { OrbitControls } from '@react-three/drei'
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
-import { TASK_DEFS } from '@shared/tasks'
+import { TASK_DEFS, AI_TASK_DEFS } from '@shared/tasks'
 import { generateMapData, isWalkable, CELL_SIZE, FLOOR_HEIGHT, WALL_HEIGHT } from '@shared/mapgen'
 import type { MapData } from '@shared/mapgen'
-import type { StationInfo, TaskId } from '@shared/types'
+import type { StationInfo, TaskId, BodyInfo } from '@shared/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SPEED      = 7.0
@@ -291,10 +292,10 @@ function Workstation({
 const _v3 = new THREE.Vector3()
 
 function PlayerMesh({
-  x, z, floor: pFloor, facing, faction, isLocal, disguised,
+  x, z, floor: pFloor, facing, isLocal, isEliminated,
 }: {
   x: number; z: number; floor: number; facing: number
-  faction: string; isLocal: boolean; disguised?: boolean
+  isLocal: boolean; isEliminated?: boolean
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const floorY   = pFloor * FLOOR_HEIGHT
@@ -307,23 +308,40 @@ function PlayerMesh({
     }
   })
 
-  const effectiveFaction = (!isLocal && disguised) ? 'workforce' : faction
-  const color = isLocal ? '#6D28D9' : effectiveFaction === 'opposition' ? '#ef4444' : '#3b82f6'
+  const color = isLocal ? '#6D28D9' : '#3b82f6'
 
   return (
     <group ref={groupRef} position={[x, floorY, z]}>
       <mesh position={[0, 0.85, 0]} castShadow>
         <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
-        <meshStandardMaterial color={color} />
+        <meshStandardMaterial color={color} transparent opacity={isEliminated ? 0.35 : 1} />
       </mesh>
       <mesh position={[0, 1.6, 0]} castShadow>
         <sphereGeometry args={[0.2, 8, 8]} />
-        <meshStandardMaterial color={color} />
+        <meshStandardMaterial color={color} transparent opacity={isEliminated ? 0.35 : 1} />
       </mesh>
       <mesh position={[0, 1.25, 0.3]}>
         <sphereGeometry args={[0.07, 6, 6]} />
         <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
       </mesh>
+    </group>
+  )
+}
+
+// ── Body marker ───────────────────────────────────────────────────────────────
+function BodyMarker({ body, floorY, isNear }: { body: BodyInfo; floorY: number; isNear: boolean }) {
+  return (
+    <group position={[body.x, floorY + 0.06, body.z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.55, 24]} />
+        <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={isNear ? 2 : 0.7} transparent opacity={0.85} />
+      </mesh>
+      {isNear && (
+        <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.65, 0.85, 24]} />
+          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={3} transparent opacity={0.6} />
+        </mesh>
+      )}
     </group>
   )
 }
@@ -344,16 +362,35 @@ function FollowCamera({ currentFloor: _cf }: { currentFloor: number }) {
   return null
 }
 
+// ── Spectator: follow a specific player ───────────────────────────────────────────────────
+const _specLook    = new THREE.Vector3()
+const _specDesired = new THREE.Vector3()
+
+function SpectatorFollowCamera({ targetId }: { targetId: string }) {
+  const { camera } = useThree()
+  useFrame(() => {
+    const gs = useGameRoom.getState()
+    const target = gs.players.find(p => p.sessionId === targetId)
+    if (!target) return
+    const fy = (target.floor ?? 0) * FLOOR_HEIGHT
+    _specLook.set(target.x, fy + 0.8, target.z)
+    _specDesired.set(target.x + 14, fy + 12, target.z + 14)
+    camera.position.lerp(_specDesired, 0.08)
+    camera.lookAt(_specLook)
+  })
+  return null
+}
+
 // ── Local Player Controller ───────────────────────────────────────────────────
 function LocalPlayerController({
-  faction, mapData, switchPositions, onNearStation, onNearSwitch, onZoneChange,
+  mapData, switchPositions, onNearStation, onNearSwitch, onZoneChange, onNearBody,
 }: {
-  faction: string
   mapData: MapData | null
   switchPositions: SwitchPos[]
   onNearStation: (st: StationInfo | null) => void
   onNearSwitch:  (zone: string | null) => void
   onZoneChange:  (zone: string | null) => void
+  onNearBody:    (body: BodyInfo | null) => void
 }) {
   const keys      = useKeyboard()
   const facingRef  = useRef(0)
@@ -374,8 +411,7 @@ function LocalPlayerController({
     if (dx !== 0 || dz !== 0) {
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
-      const gs  = useGameRoom.getState()
-      const spd = (faction === 'workforce' && gs.activeEffects.workforceSpeedActive) ? SPEED * 1.3 : SPEED
+      const spd = SPEED
       const nx  = localPos.x + dx * spd * delta
       const nz  = localPos.z + dz * spd * delta
 
@@ -436,12 +472,24 @@ function LocalPlayerController({
     const swZone = sw?.zone ?? null
     if (swZone !== prevSwitch.current) { prevSwitch.current = swZone; onNearSwitch(swZone) }
 
-    // Hold-E for workstation
+    // Proximity to bodies
+    const nearBodyObj = gs.bodies.find(b => {
+      if (b.floor !== localFloor) return false
+      const bx = localPos.x - b.x, bz = localPos.z - b.z
+      return Math.sqrt(bx * bx + bz * bz) < INTERACT_R * 2
+    }) ?? null
+    onNearBody(nearBodyObj)
+
+    // Hold-E for workstation or body report
     const wantsHold   = nearStation && !!k['KeyE']
     const currentHold = gs.holdingStationId
-    if (wantsHold && nearStation) {
-      const td = TASK_DEFS.find(t => t.id === nearStation.taskId && t.role === gs.myRole)
-      if (td && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
+    if (!nearStation && nearBodyObj && k['KeyE']) {
+      // Report body
+      gs.room?.send('report_body', { bodyId: nearBodyObj.bodyId })
+    } else if (wantsHold && nearStation) {
+      const td = nearStation.taskId ? [...TASK_DEFS, ...AI_TASK_DEFS].find(t => t.id === nearStation.taskId) : null
+      const playerTasks = gs.myAssignedTasks ?? []
+      if (td && playerTasks.includes(nearStation.taskId as TaskId) && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
         if (currentHold !== nearStation.stationId) {
           gs.setHolding(nearStation.stationId)
           gs.room?.send('task_hold_start', { stationId: nearStation.stationId })
@@ -460,7 +508,7 @@ function LocalPlayerController({
     }
   })
 
-  const color = faction === 'opposition' ? '#ef4444' : '#6D28D9'
+  const color = '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
       {/* Player body */}
@@ -484,13 +532,18 @@ function LocalPlayerController({
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function Scene({
-  onNearStation, onZoneChange, gameOver,
+  onNearStation, onNearBody, onZoneChange, gameOver, spectate, spectateTarget,
 }: {
-  onNearStation: (st: StationInfo | null) => void
-  onZoneChange:  (zone: string | null) => void
-  gameOver:      boolean
+  onNearStation:  (st: StationInfo | null) => void
+  onNearBody:     (body: BodyInfo | null) => void
+  onZoneChange:   (zone: string | null) => void
+  gameOver:       boolean
+  spectate:       boolean
+  spectateTarget: string | null
 }) {
-  const { players, myFaction, room, stations, completedTasks, holdingStationId } = useGameRoom()
+  const { players, room, stations, completedTasks, holdingStationId } = useGameRoom()
+  const myAssignedTasks = useGameRoom(s => s.myAssignedTasks)
+  const bodies  = useGameRoom(s => s.bodies)
   const mapSeed = useGameRoom(s => s.mapSeed)
   const mapSize = useGameRoom(s => s.mapSize)
   const myRole  = useGameRoom(s => s.myRole)
@@ -534,6 +587,8 @@ function Scene({
     setRoomLights(prev => ({ ...prev, [zone]: !prev[zone] }))
   }, [])
 
+  const [nearBodyState, setNearBodyState] = useState<BodyInfo | null>(null)
+
   // Track local floor for rendering
   useFrame(() => {
     if (renderFloor !== localFloor) setRenderFloor(localFloor)
@@ -545,31 +600,37 @@ function Scene({
       const gs = useGameRoom.getState()
       gs.setPlayers(
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
-          sessionId: p.sessionId, name: p.name,
-          x: p.x ?? 0, z: p.z ?? 0, floor: p.floor ?? 0, facing: p.facing ?? 0,
-          faction: p.faction ?? '', role: p.role ?? '',
-          connected: p.connected, isBot: p.isBot ?? false,
-          disguised: p.disguised ?? false, slowed: p.slowed ?? false,
+          sessionId:    p.sessionId,
+          name:         p.name,
+          x:            p.x      ?? 0,
+          z:            p.z      ?? 0,
+          floor:        p.floor  ?? 0,
+          facing:       p.facing ?? 0,
+          role:         p.role   ?? '',
+          connected:    p.connected ?? true,
+          isBot:        p.isBot        ?? false,
+          isEliminated: p.isEliminated ?? false,
+          allHandsLeft: p.allHandsLeft ?? 2,
         }))
       )
-      if (state.lockdownActive !== undefined) {
-        const curr = gs.activeEffects
-        if (curr.lockdownActive !== !!state.lockdownActive)
-          gs.setActiveEffects({ ...curr, lockdownActive: !!state.lockdownActive })
-      }
+      // Sync bodies from server schema
+      const bodyList = Array.from((state.bodies as Map<string, any>).values()).map((b: any) => ({
+        bodyId: b.bodyId, name: b.name, x: b.x, z: b.z, floor: b.floor,
+      }))
+      for (const body of bodyList) gs.addBody(body)
     })
-    room.onMessage('station_list',     (data: { stations: StationInfo[] }) => useGameRoom.getState().setStations(data.stations))
-    room.onMessage('task_complete',    (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
+    room.onMessage('station_list',  (data: { stations: StationInfo[] }) => useGameRoom.getState().setStations(data.stations))
+    room.onMessage('task_complete',  (data: { taskId: TaskId; playerName: string }) => {
       const gs = useGameRoom.getState()
       gs.completeTask(data.taskId)
-      gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
-      gs.addIncident(`${data.role.replace('_', ' ')}: ${data.effectDesc}`, 'info')
+      gs.addToast({ playerName: data.playerName, taskId: data.taskId, expiresAt: Date.now() + 4000 })
+      gs.addIncident(`${data.playerName} completed ${String(data.taskId).replace(/_/g, ' ')}`, 'info')
     })
-    room.onMessage('meter_update',     (d: { workforce: number; opposition: number }) => useGameRoom.getState().setMeters(d.workforce, d.opposition))
-    room.onMessage('monitor_snapshot', (d: any) => useGameRoom.getState().setMonitorSnapshot(d))
-    room.onMessage('effect_update',    (d: any) => useGameRoom.getState().setActiveEffects(d))
-    room.onMessage('game_end',         (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
-    room.onMessage('incident',         (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
+    room.onMessage('sprint_update', (data: { info: any }) => useGameRoom.getState().setSprint(data.info))
+    room.onMessage('body_appeared', (data: { body: BodyInfo }) => useGameRoom.getState().addBody(data.body))
+    room.onMessage('body_removed',  (data: { bodyId: string }) => useGameRoom.getState().removeBody(data.bodyId))
+    room.onMessage('game_end',      (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
+    room.onMessage('incident',      (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
 
     // Recovery: if stations were missed (race with game_start), ask the server to resend
     if (useGameRoom.getState().stations.length === 0 && useGameRoom.getState().mapSeed !== '') {
@@ -600,7 +661,10 @@ function Scene({
       <ambientLight intensity={0.45} color="#8080cc" />
       <directionalLight position={[20, 30, 20]} intensity={0.6} castShadow={false} />
 
-      <FollowCamera currentFloor={renderFloor} />
+      {/* Camera: spectator free, spectator follow, or player follow */}
+      {spectate && spectateTarget && <SpectatorFollowCamera targetId={spectateTarget} />}
+      {spectate && !spectateTarget && <OrbitControls enableDamping dampingFactor={0.08} />}
+      {!spectate && <FollowCamera currentFloor={renderFloor} />}
 
       {/* Grid + lights */}
       {mapData && (
@@ -621,12 +685,12 @@ function Scene({
 
       {/* Workstations */}
       {stations.filter(st => (st.floor ?? 0) === renderFloor).map(st => {
-        const hasMyTask  = !!myRole && !!st.taskId && TASK_DEFS.some(t => t.id === st.taskId && t.role === myRole)
-        const isHolding  = holdingStationId === st.stationId
-        const isComplete = !!st.taskId && completedTasks.has(st.taskId)
+        const done      = completedTasks.has(st.taskId as TaskId)
+        const hasMyTask = !!myRole && !!st.taskId && (myAssignedTasks?.includes(st.taskId as TaskId) ?? false)
+        const isHolding = holdingStationId === st.stationId
         return (
           <Workstation key={st.stationId} station={st} hasMyTask={hasMyTask}
-            isHolding={isHolding} isComplete={isComplete} floorY={floorY} />
+            isHolding={isHolding} isComplete={done} floorY={floorY} />
         )
       })}
 
@@ -634,19 +698,25 @@ function Scene({
       {players.filter(p => p.sessionId !== mySessionId).map(p => (
         <PlayerMesh key={p.sessionId}
           x={p.x} z={p.z} floor={p.floor} facing={p.facing}
-          faction={p.faction} isLocal={false} disguised={p.disguised}
+          isLocal={false} isEliminated={p.isEliminated}
         />
       ))}
 
-      {/* Local player */}
-      {!gameOver && (
+      {/* Bodies on current floor */}
+      {bodies.filter(b => b.floor === renderFloor).map(b => (
+        <BodyMarker key={b.bodyId} body={b} floorY={floorY}
+          isNear={nearBodyState?.bodyId === b.bodyId} />
+      ))}
+
+      {/* Local player — hidden in spectate mode */}
+      {!gameOver && !spectate && (
         <LocalPlayerController
-          faction={myFaction ?? 'workforce'}
           mapData={mapData}
           switchPositions={switchPositions}
           onNearStation={onNearStation}
           onNearSwitch={setNearSwitch}
           onZoneChange={onZoneChange}
+          onNearBody={(b) => { setNearBodyState(b); onNearBody(b) }}
         />
       )}
     </>
@@ -655,19 +725,29 @@ function Scene({
 
 // ── GameWorld (exported) ──────────────────────────────────────────────────────
 export interface GameWorldProps {
-  onNearStation: (st: StationInfo | null) => void
-  onZoneChange?: (zone: string | null) => void
-  gameOver?:     boolean
+  onNearStation?:  (st: StationInfo | null) => void
+  onNearBody?:     (body: BodyInfo | null) => void
+  onZoneChange?:   (zone: string | null) => void
+  gameOver?:       boolean
+  spectate?:       boolean
+  spectateTarget?: string | null
 }
 
-export default function GameWorld({ onNearStation, onZoneChange, gameOver = false }: GameWorldProps) {
+export default function GameWorld({ onNearStation, onNearBody, onZoneChange, gameOver = false, spectate = false, spectateTarget = null }: GameWorldProps) {
   return (
     <Canvas
       shadows
       camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
       style={{ position: 'fixed', inset: 0, zIndex: 0 }}
     >
-      <Scene onNearStation={onNearStation} onZoneChange={onZoneChange ?? (() => {})} gameOver={gameOver} />
+      <Scene
+        onNearStation={onNearStation ?? (() => {})}
+        onNearBody={onNearBody ?? (() => {})}
+        onZoneChange={onZoneChange ?? (() => {})}
+        gameOver={gameOver}
+        spectate={spectate}
+        spectateTarget={spectateTarget}
+      />
     </Canvas>
   )
 }

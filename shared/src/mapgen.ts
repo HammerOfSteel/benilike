@@ -75,7 +75,6 @@ const ZONE_SCORERS: Record<ZoneId, (r: RotRoom, gw: number, gh: number) => numbe
   finance_floor:  (r)         => { const [cx, cz] = r.getCenter(); return  cx - cz },   // NE
   marketing_hub:  (r)         => { const [cx, cz] = r.getCenter(); return -cx + cz },   // SW
   exec_suite:     (r)         => { const [cx, cz] = r.getCenter(); return  cx + cz },   // SE
-  opposition_den: (r, gw, gh) => { const [cx, cz] = r.getCenter(); return -(Math.abs(cx - gw/2) + Math.abs(cz - gh/2)) },
 }
 
 // ── Coordinate helpers (exported for client/server use) ──────────────────────

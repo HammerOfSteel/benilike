@@ -9,9 +9,15 @@ import JoinGameScreen from './components/screens/JoinGameScreen'
 import LobbyScreen from './components/screens/LobbyScreen'
 import GameScreen from './components/screens/GameScreen'
 import BriefingScreen from './components/screens/BriefingScreen'
+import MeetingScreen from './components/screens/MeetingScreen'
+import RetroScreen from './components/screens/RetroScreen'
+import SpectatorScreen from './components/screens/SpectatorScreen'
 import { useTheme } from './store/useTheme'
 
-export type Screen = 'main-menu' | 'new-game' | 'join-game' | 'lobby' | 'briefing' | 'game' | 'settings' | 'how-to-play' | 'credits'
+export type Screen =
+  | 'main-menu' | 'new-game' | 'join-game' | 'lobby' | 'briefing'
+  | 'game' | 'meeting' | 'retro' | 'spectator'
+  | 'settings' | 'how-to-play' | 'credits'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('main-menu')
@@ -19,8 +25,8 @@ export default function App() {
 
   return (
     <div data-theme={theme} style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* 3D background — only on menus/briefing (not in-game) */}
-      {screen !== 'game' && <OfficeScene />}
+      {/* 3D background — only on menus/briefing (not in-game or spectating) */}
+      {screen !== 'game' && screen !== 'meeting' && screen !== 'retro' && screen !== 'spectator' && <OfficeScene />}
 
       {/* UI overlay */}
       {screen === 'main-menu'   && <MainMenu onNavigate={setScreen} />}
@@ -32,6 +38,9 @@ export default function App() {
       {screen === 'lobby'       && <LobbyScreen onNavigate={setScreen} />}
       {screen === 'briefing'    && <BriefingScreen onNavigate={setScreen} />}
       {screen === 'game'        && <GameScreen onNavigate={setScreen} />}
+      {screen === 'meeting'     && <MeetingScreen onNavigate={setScreen} />}
+      {screen === 'retro'       && <RetroScreen onNavigate={setScreen} />}
+      {screen === 'spectator'   && <SpectatorScreen onNavigate={setScreen} />}
     </div>
   )
 }

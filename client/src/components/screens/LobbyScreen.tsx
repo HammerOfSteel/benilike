@@ -4,14 +4,14 @@ import { TerminalLog } from '../shared/TerminalLog'
 import type { TerminalLine } from '../shared/TerminalLog'
 import { useGameRoom } from '../../store/useGameRoom'
 import { ROLE_LABELS } from '@shared/types'
-import type { StationInfo, TaskId } from '@shared/types'
+import type { StationInfo, TaskId, BodyInfo, SprintInfo } from '@shared/types'
 import type { Screen } from '../../App'
 import styles from './screens.module.css'
 
 interface Props { onNavigate: (s: Screen) => void }
 
 export default function LobbyScreen({ onNavigate }: Props) {
-  const { room, myRole, myFaction, players, incidents, clearRoom } = useGameRoom()
+  const { room, myRole, players, incidents, clearRoom } = useGameRoom()
   const [termLines, setTermLines]     = useState<TerminalLine[]>([])
   const prevIncidentLen               = useRef(0)
 
@@ -23,18 +23,17 @@ export default function LobbyScreen({ onNavigate }: Props) {
     room.onStateChange((state: any) => {
       useGameRoom.getState().setPlayers(
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
-          sessionId: p.sessionId,
-          name:      p.name,
-          x:         p.x      ?? 0,
-          z:         p.z      ?? 0,
-          facing:    p.facing ?? 0,
-          faction:   p.faction ?? '',
-          role:      p.role   ?? '',
-          connected: p.connected,
-          isBot:     p.isBot     ?? false,
-          disguised: p.disguised ?? false,
-          slowed:    p.slowed    ?? false,
-          floor:     p.floor     ?? 0,
+          sessionId:    p.sessionId,
+          name:         p.name,
+          x:            p.x      ?? 0,
+          z:            p.z      ?? 0,
+          facing:       p.facing ?? 0,
+          role:         p.role   ?? '',
+          connected:    p.connected ?? true,
+          isBot:        p.isBot        ?? false,
+          isEliminated: p.isEliminated ?? false,
+          allHandsLeft: p.allHandsLeft ?? 2,
+          floor:        p.floor        ?? 0,
         }))
       )
     })
@@ -44,8 +43,12 @@ export default function LobbyScreen({ onNavigate }: Props) {
       useGameRoom.getState().addIncident(data.message, data.severity as any, data.time)
     })
 
-    room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
-      useGameRoom.getState().setRole(data.role as any, data.faction as any)
+    room.onMessage('role_assigned', (data: { role: string; assignedTasks: TaskId[] }) => {
+      useGameRoom.getState().setRole(data.role as any, data.assignedTasks ?? [])
+    })
+
+    room.onMessage('ai_briefing', (data: { phase: number; phaseTasks: TaskId[] }) => {
+      useGameRoom.getState().setAiBriefing(data.phase, data.phaseTasks)
     })
 
     room.onMessage('game_end', () => {
@@ -63,19 +66,23 @@ export default function LobbyScreen({ onNavigate }: Props) {
       useGameRoom.getState().setStations(data.stations)
     })
 
-    room.onMessage('effect_update', (d: any) => {
-      useGameRoom.getState().setActiveEffects(d)
-    })
-
-    room.onMessage('meter_update', (d: { workforce: number; opposition: number }) => {
-      useGameRoom.getState().setMeters(d.workforce, d.opposition)
-    })
-
-    room.onMessage('task_complete', (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
+    room.onMessage('task_complete', (data: { taskId: TaskId; playerName: string }) => {
       const gs = useGameRoom.getState()
       gs.completeTask(data.taskId)
-      gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
-      gs.addIncident(`${data.role.replace('_', ' ')}: ${data.effectDesc}`, 'info')
+      gs.addToast({ playerName: data.playerName, taskId: data.taskId, expiresAt: Date.now() + 4000 })
+      gs.addIncident(`${data.playerName} completed ${data.taskId.replace(/_/g, ' ')}`, 'info')
+    })
+
+    room.onMessage('sprint_update', (data: { info: SprintInfo }) => {
+      useGameRoom.getState().setSprint(data.info)
+    })
+
+    room.onMessage('body_appeared', (data: { body: BodyInfo }) => {
+      useGameRoom.getState().addBody(data.body)
+    })
+
+    room.onMessage('body_removed', (data: { bodyId: string }) => {
+      useGameRoom.getState().removeBody(data.bodyId)
     })
 
     return () => { room.removeAllListeners() }
@@ -104,7 +111,7 @@ export default function LobbyScreen({ onNavigate }: Props) {
     room.send('start_game', {})
   }
 
-  const roomCode = room?.id?.slice(0, 8).toUpperCase() ?? '---'
+  const roomCode  = room?.id?.slice(0, 8).toUpperCase() ?? '---'
   const maxClients = (room as any)?.maxClients ?? 10
 
   return (
@@ -140,14 +147,8 @@ export default function LobbyScreen({ onNavigate }: Props) {
                     {isMe && <span className={styles.youBadge}> YOU</span>}
                   </span>
                   <span className={styles.playerStatus}>
-                    {isMe && myFaction ? (
-                      <>
-                        <span className={myFaction === 'workforce' ? styles.workforceTag : styles.oppositionTag}>
-                          {myFaction.toUpperCase()}
-                        </span>
-                        {' · '}
-                        <span>{myRole ? ROLE_LABELS[myRole] : '—'}</span>
-                      </>
+                    {isMe && myRole ? (
+                      <span>{ROLE_LABELS[myRole] ?? myRole}</span>
                     ) : (
                       <span className={styles.playerStatusHidden}>OPERATIVE</span>
                     )}

@@ -1654,3 +1654,109 @@
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Meeting / Retro overlay ───────────────────────────────────────────── */
+.meetingOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  padding: 1rem;
+  overflow-y: auto;
+}
+.meetingCard {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1.5rem 2rem;
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.meetingTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--color-terminal);
+  text-align: center;
+  text-transform: uppercase;
+}
+.meetingEjected {
+  text-align: center;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #f87171;
+}
+.meetingAiReveal {
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.meetingChat {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  min-height: 120px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.meetingChatMsg {
+  font-size: 0.82rem;
+  display: flex;
+  gap: 0.35rem;
+}
+.meetingChatName { color: var(--color-terminal); font-weight: 600; }
+.meetingChatText { color: var(--color-text); opacity: 0.9; }
+.meetingChatInput {
+  display: flex;
+  gap: 0.5rem;
+}
+.meetingInput {
+  flex: 1;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  color: var(--color-text);
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+  outline: none;
+}
+.meetingInput:focus { border-color: var(--color-terminal); }
+.meetingVoteList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.meetingVoteBtn {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.meetingVoteBtn:hover:not(:disabled) {
+  border-color: var(--color-terminal);
+  background: rgba(100,80,200,0.15);
+}
+.meetingVoteBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.meetingVoteBtnActive {
+  border-color: var(--color-terminal) !important;
+  background: rgba(100,80,200,0.25) !important;
+  color: var(--color-terminal);
+}
