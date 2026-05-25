@@ -30,7 +30,9 @@ export default function LobbyScreen({ onNavigate }: Props) {
           faction:   p.faction ?? '',
           role:      p.role   ?? '',
           connected: p.connected,
-          isBot:     p.isBot  ?? false,
+          isBot:     p.isBot     ?? false,
+          disguised: p.disguised ?? false,
+          slowed:    p.slowed    ?? false,
         }))
       )
     })

@@ -321,7 +321,7 @@ function Scene({ onNearStation, gameOver }: {
   useEffect(() => {
     if (!room) return
 
-    const unsub = room.onStateChange((state: any) => {
+    room.onStateChange((state: any) => {
       const gs = useGameRoom.getState()
       gs.setPlayers(
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
@@ -377,7 +377,7 @@ function Scene({ onNearStation, gameOver }: {
       useGameRoom.getState().addIncident(data.message, (data.severity as any) ?? 'info', data.time)
     })
 
-    return () => { if (typeof unsub === 'function') unsub() }
+    return () => {}
   }, [room])
 
   const myRole       = useGameRoom(s => s.myRole)
