@@ -3,22 +3,25 @@ import { useRef, useEffect } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
+import { TASK_DEFS } from '@shared/tasks'
+import type { StationInfo, TaskId } from '@shared/types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const ROOM_HALF    = 11.5      // outer bound for main office (wall at ±12)
-const ROOM_HALF_Z_N = 15.5    // north bound (server room back wall at -16)
-const ROOM_HALF_Z_S = 9.0     // south bound
-const SPEED        = 6.0       // units per second
-const SEND_MS      = 100       // how often to send position to server
-const TERMINAL_X   = 0
-const TERMINAL_Z   = -11.5     // centre of server room
-const INTERACT_R   = 2.5       // interact radius
+const ROOM_HALF     = 11.5
+const ROOM_HALF_Z_N = 15.5
+const ROOM_HALF_Z_S = 9.0
+const SPEED         = 6.0
+const SEND_MS       = 100
+const INTERACT_R    = 2.5
 
-// ── Room ──────────────────────────────────────────────────────────────────────
+// ── Shared position (module-level, avoids stale closures) ────────────────────
+const localPos = new THREE.Vector3(0, 0, 6)
+
+// ── Room pieces ───────────────────────────────────────────────────────────────
 function Floor() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[20, 20]} />
+      <planeGeometry args={[24, 20]} />
       <meshStandardMaterial color="#141420" />
     </mesh>
   )
@@ -33,218 +36,165 @@ function Wall({ pos, sz }: { pos: [number, number, number]; sz: [number, number,
   )
 }
 
-function Desk({ position }: { position: [number, number, number] }) {
+// ── Workstation (glowing task desk) ──────────────────────────────────────────
+function Workstation({ station, hasMyTask, isHolding, isComplete }: {
+  station: StationInfo
+  hasMyTask: boolean
+  isHolding: boolean
+  isComplete: boolean
+}) {
+  const color     = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#3a3a52'
+  const emissive  = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
+  const emInt     = isHolding ? 2.0 : hasMyTask ? 0.6 : 0.08
+
   return (
-    <group position={position}>
+    <group position={[station.x, 0, station.z]}>
+      {/* Desk surface */}
       <mesh position={[0, 0.4, 0]} castShadow receiveShadow>
         <boxGeometry args={[1.8, 0.08, 0.9]} />
-        <meshStandardMaterial color="#3a3a52" />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emInt} />
       </mesh>
-      {[[-0.8, -0.35], [0.8, -0.35], [-0.8, 0.35], [0.8, 0.35]].map(([lx, lz], i) => (
+      {/* Legs */}
+      {([[-0.8, -0.35], [0.8, -0.35], [-0.8, 0.35], [0.8, 0.35]] as [number, number][]).map(([lx, lz], i) => (
         <mesh key={i} position={[lx, 0.2, lz]}>
           <boxGeometry args={[0.08, 0.4, 0.08]} />
           <meshStandardMaterial color="#2a2a3e" />
         </mesh>
       ))}
+      {/* Monitor */}
       <mesh position={[0, 0.72, -0.28]}>
-        <boxGeometry args={[0.72, 0.44, 0.05]} />
-        <meshStandardMaterial color="#0e0e1c" emissive="#4ADE80" emissiveIntensity={0.04} />
+        <boxGeometry args={[0.7, 0.45, 0.04]} />
+        <meshStandardMaterial color="#0f0f23" emissive={emissive} emissiveIntensity={emInt * 0.5} />
       </mesh>
+      {/* Amber/green glow ring when player has task here */}
+      {hasMyTask && !isComplete && (
+        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[1.1, 1.3, 32]} />
+          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={isHolding ? 3 : 1} transparent opacity={0.55} />
+        </mesh>
+      )}
+      {isComplete && (
+        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[1.1, 1.3, 32]} />
+          <meshStandardMaterial color="#4ade80" emissive="#4ade80" emissiveIntensity={0.8} transparent opacity={0.4} />
+        </mesh>
+      )}
     </group>
   )
 }
 
-function Terminal({ progress }: { progress: number }) {
-  const bodyRef = useRef<THREE.Mesh>(null)
-  const lightRef = useRef<THREE.PointLight>(null)
-
-  useFrame(({ clock }) => {
-    if (!bodyRef.current || !lightRef.current) return
-    const mat = bodyRef.current.material as THREE.MeshStandardMaterial
-    const pulse = 0.25 + Math.sin(clock.elapsedTime * 3) * 0.08
-    // Tint towards red when progress is low
-    const g = progress / 100
-    mat.emissive.setRGB(1 - g, g, g * 0.3)
-    mat.emissiveIntensity = pulse
-    lightRef.current.intensity = pulse * 3
-    lightRef.current.color.setRGB(1 - g, g, g * 0.3)
-  })
-
-  return (
-    <group position={[TERMINAL_X, 0, TERMINAL_Z]}>
-      <mesh position={[0, 0.1, 0]}>
-        <boxGeometry args={[1.2, 0.12, 0.7]} />
-        <meshStandardMaterial color="#2a2a3e" />
-      </mesh>
-      <mesh ref={bodyRef} position={[0, 0.9, 0]} castShadow>
-        <boxGeometry args={[0.7, 1.5, 0.35]} />
-        <meshStandardMaterial color="#0e0e1c" emissive={new THREE.Color(0, 1, 0.3)} emissiveIntensity={0.25} />
-      </mesh>
-      <pointLight ref={lightRef} position={[0, 0.9, 0.5]} distance={5} intensity={1} />
-    </group>
-  )
-}
-
-function ServerRoom({ progress }: { progress: number }) {
-  // Raised floor platform for server room (z: -9 to -14, slightly elevated)
+// ── Server room (racks + ambient, no terminal) ────────────────────────────────
+function ServerRoom() {
   return (
     <group>
-      {/* Raised floor */}
       <mesh position={[0, 0.12, -11.5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[14, 9]} />
+        <planeGeometry args={[16, 9]} />
         <meshStandardMaterial color="#0d0d1c" />
       </mesh>
-      {/* Floor edge step */}
       <mesh position={[0, 0.06, -7.2]}>
-        <boxGeometry args={[14, 0.12, 0.3]} />
+        <boxGeometry args={[16, 0.12, 0.3]} />
         <meshStandardMaterial color="#1e1e30" />
       </mesh>
-      {/* Server racks — left side */}
-      <mesh position={[-5.5, 1.1, -14.5]} castShadow>
-        <boxGeometry args={[1.2, 2.2, 1]} />
-        <meshStandardMaterial color="#1a1a2e" />
-      </mesh>
-      <mesh position={[-3.5, 1.1, -14.5]} castShadow>
-        <boxGeometry args={[1.2, 2.2, 1]} />
-        <meshStandardMaterial color="#1a1a2e" />
-      </mesh>
-      {/* Server racks — right side */}
-      <mesh position={[ 5.5, 1.1, -14.5]} castShadow>
-        <boxGeometry args={[1.2, 2.2, 1]} />
-        <meshStandardMaterial color="#1a1a2e" />
-      </mesh>
-      <mesh position={[ 3.5, 1.1, -14.5]} castShadow>
-        <boxGeometry args={[1.2, 2.2, 1]} />
-        <meshStandardMaterial color="#1a1a2e" />
-      </mesh>
-      {/* Blinking indicator lights on racks */}
-      <mesh position={[-5.5, 1.8, -14.02]}>
-        <boxGeometry args={[0.08, 0.08, 0.05]} />
-        <meshStandardMaterial color="#4ADE80" emissive="#4ADE80" emissiveIntensity={2} />
-      </mesh>
-      <mesh position={[-3.5, 1.8, -14.02]}>
-        <boxGeometry args={[0.08, 0.08, 0.05]} />
-        <meshStandardMaterial color="#4ADE80" emissive="#4ADE80" emissiveIntensity={2} />
-      </mesh>
-      <mesh position={[ 5.5, 1.8, -14.02]}>
-        <boxGeometry args={[0.08, 0.08, 0.05]} />
-        <meshStandardMaterial color="#4ADE80" emissive="#4ADE80" emissiveIntensity={2} />
-      </mesh>
-      {/* Railing posts (left and right of doorway, with gap in centre) */}
-      <mesh position={[-5, 1, -7.6]}>
-        <boxGeometry args={[0.12, 2, 0.12]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      <mesh position={[-2, 1, -7.6]}>
-        <boxGeometry args={[0.12, 2, 0.12]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      <mesh position={[ 2, 1, -7.6]}>
-        <boxGeometry args={[0.12, 2, 0.12]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      <mesh position={[ 5, 1, -7.6]}>
-        <boxGeometry args={[0.12, 2, 0.12]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      {/* Railing bars */}
-      <mesh position={[-3.5, 1.5, -7.6]}>
-        <boxGeometry args={[3, 0.08, 0.08]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      <mesh position={[ 3.5, 1.5, -7.6]}>
-        <boxGeometry args={[3, 0.08, 0.08]} />
-        <meshStandardMaterial color="#3a3a52" />
-      </mesh>
-      {/* "SERVER ROOM" sign above entrance */}
+      {/* Server racks */}
+      {([-5.5, -3.5, 3.5, 5.5] as number[]).map((rx, i) => (
+        <group key={i}>
+          <mesh position={[rx, 1.1, -14.5]} castShadow>
+            <boxGeometry args={[1.2, 2.2, 1]} />
+            <meshStandardMaterial color="#1a1a2e" />
+          </mesh>
+          <mesh position={[rx, 1.8, -14.02]}>
+            <boxGeometry args={[0.08, 0.08, 0.05]} />
+            <meshStandardMaterial color="#4ADE80" emissive="#4ADE80" emissiveIntensity={2} />
+          </mesh>
+        </group>
+      ))}
+      {/* Railing */}
+      {([-5, -2, 2, 5] as number[]).map((rx, i) => (
+        <mesh key={i} position={[rx, 1, -7.6]}>
+          <boxGeometry args={[0.12, 2, 0.12]} />
+          <meshStandardMaterial color="#3a3a52" />
+        </mesh>
+      ))}
+      <mesh position={[-3.5, 1.5, -7.6]}><boxGeometry args={[3, 0.08, 0.08]} /><meshStandardMaterial color="#3a3a52" /></mesh>
+      <mesh position={[ 3.5, 1.5, -7.6]}><boxGeometry args={[3, 0.08, 0.08]} /><meshStandardMaterial color="#3a3a52" /></mesh>
+      {/* Sign */}
       <mesh position={[0, 2.6, -7.6]}>
         <boxGeometry args={[2.2, 0.4, 0.08]} />
         <meshStandardMaterial color="#6D28D9" emissive="#6D28D9" emissiveIntensity={0.5} />
       </mesh>
-      {/* Ambient light for server room */}
       <pointLight position={[0, 2.5, -11.5]} distance={9} intensity={0.8} color="#8060ff" />
-      <Terminal progress={progress} />
     </group>
   )
 }
 
-function OfficeDungeon({ progress }: { progress: number }) {
+function OfficeDungeon({ lockdown }: { lockdown: boolean }) {
   return (
     <group>
-      {/* Main office floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[24, 18]} />
-        <meshStandardMaterial color="#141420" />
-      </mesh>
+      <Floor />
+      {/* Outer walls */}
+      <Wall pos={[ 0,  1.5,  9.25]} sz={[24, 3, 0.5]} />
+      <Wall pos={[ 12, 1.5,  1.0]}  sz={[0.5, 3, 16.5]} />
 
-      {/* Outer walls — main office area (z: -7 to +9, x: -12 to +12) */}
-      <Wall pos={[ 0,  1.5,  9.25]} sz={[24, 3, 0.5]} />   {/* South */}
-      <Wall pos={[-12, 1.5,  1.0]}  sz={[0.5, 3, 16.5]} /> {/* West main */}
-      <Wall pos={[ 12, 1.5,  1.0]}  sz={[0.5, 3, 16.5]} /> {/* East main */}
+      {/* West main wall — two segments with gap at z=-5 to z=+1 for Network Closet */}
+      <Wall pos={[-12, 1.5,  5.5]}  sz={[0.5, 3, 7.5]} />  {/* south segment */}
+      <Wall pos={[-12, 1.5, -6.5]}  sz={[0.5, 3, 3.0]} />  {/* north segment  */}
 
-      {/* North divider wall — with a 4-unit opening in centre for server room */}
-      <Wall pos={[-6.5, 1.5, -7]} sz={[9, 3, 0.5]} />   {/* Left of gap */}
-      <Wall pos={[ 6.5, 1.5, -7]} sz={[9, 3, 0.5]} />   {/* Right of gap */}
+      {/* North divider — gap in centre for server room */}
+      <Wall pos={[-6.5, 1.5, -7]} sz={[9, 3, 0.5]} />
+      <Wall pos={[ 6.5, 1.5, -7]} sz={[9, 3, 0.5]} />
 
       {/* Server room outer walls */}
-      <Wall pos={[ 0,  1.5, -16]} sz={[16, 3, 0.5]} />  {/* North */}
-      <Wall pos={[-8,  1.5, -11.5]} sz={[0.5, 3, 9]} /> {/* West */}
-      <Wall pos={[ 8,  1.5, -11.5]} sz={[0.5, 3, 9]} /> {/* East */}
+      <Wall pos={[ 0,  1.5, -16]}   sz={[16, 3, 0.5]} />
+      <Wall pos={[-8,  1.5, -11.5]} sz={[0.5, 3, 9]} />
+      <Wall pos={[ 8,  1.5, -11.5]} sz={[0.5, 3, 9]} />
 
-      {/* Desks — main floor */}
-      <Desk position={[-6, 0, -4]} />
-      <Desk position={[-2, 0, -4]} />
-      <Desk position={[ 2, 0, -4]} />
-      <Desk position={[ 6, 0, -4]} />
-      <Desk position={[-6, 0,  0]} />
-      <Desk position={[-2, 0,  0]} />
-      <Desk position={[ 2, 0,  0]} />
-      <Desk position={[ 6, 0,  0]} />
-      <Desk position={[-5, 0,  5]} />
-      <Desk position={[ 0, 0,  5]} />
-      <Desk position={[ 5, 0,  5]} />
+      {/* Network Closet walls (x: -12 to -8, z: -5 to +1) */}
+      <Wall pos={[-10, 1.5, -5.25]} sz={[4, 3, 0.5]} />   {/* north wall  */}
+      <Wall pos={[-10, 1.5,  0.75]} sz={[4, 3, 0.5]} />   {/* south wall  */}
+      {/* Closet sign */}
+      <mesh position={[-9, 2.5, -5.0]}>
+        <boxGeometry args={[1.6, 0.3, 0.06]} />
+        <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.4} />
+      </mesh>
+      <pointLight position={[-10, 2, -2.5]} distance={5} intensity={0.4} color="#38bdf8" />
 
-      <ServerRoom progress={progress} />
+      {/* Lockdown barrier */}
+      {lockdown && (
+        <mesh position={[0, 1.5, -7.1]}>
+          <boxGeometry args={[4, 3, 0.1]} />
+          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.6} transparent opacity={0.35} />
+        </mesh>
+      )}
+
+      <ServerRoom />
     </group>
   )
 }
 
 // ── Players ───────────────────────────────────────────────────────────────────
-interface PlayerProps {
+function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: {
   x: number; z: number; facing: number
-  faction: string; isLocal: boolean
-  disguised?: boolean
-}
-
-function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: PlayerProps) {
+  faction: string; isLocal: boolean; disguised?: boolean
+}) {
   const meshRef = useRef<THREE.Group>(null)
-
   useFrame(() => {
     if (meshRef.current) {
       meshRef.current.position.set(x, 0, z)
       meshRef.current.rotation.y = facing
     }
   })
-
-  // Disguised players appear as workforce colour to everyone else
   const effectiveFaction = (!isLocal && disguised) ? 'workforce' : faction
-  const color = isLocal
-    ? '#6D28D9'
-    : effectiveFaction === 'opposition' ? '#ef4444' : '#3b82f6'
-
+  const color = isLocal ? '#6D28D9' : effectiveFaction === 'opposition' ? '#ef4444' : '#3b82f6'
   return (
     <group ref={meshRef}>
-      {/* Body */}
       <mesh position={[0, 0.85, 0]} castShadow>
         <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
         <meshStandardMaterial color={color} />
       </mesh>
-      {/* Head */}
       <mesh position={[0, 1.6, 0]} castShadow>
         <sphereGeometry args={[0.2, 8, 8]} />
         <meshStandardMaterial color={color} />
       </mesh>
-      {/* Facing dot */}
       <mesh position={[0, 1.25, 0.3]}>
         <sphereGeometry args={[0.07, 6, 6]} />
         <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
@@ -254,46 +204,37 @@ function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: PlayerProps) 
 }
 
 // ── Follow Camera ─────────────────────────────────────────────────────────────
-const CAM_TARGET  = new THREE.Vector3()
 const CAM_DESIRED = new THREE.Vector3()
-const localPos    = new THREE.Vector3(0, 0, 6)  // shared between controller + camera
+const CAM_TARGET  = new THREE.Vector3()
 
 function FollowCamera() {
   const { camera } = useThree()
-
   useFrame(() => {
     CAM_TARGET.set(localPos.x, 0, localPos.z)
     CAM_DESIRED.set(localPos.x + 14, 12, localPos.z + 14)
     camera.position.lerp(CAM_DESIRED, 0.1)
     camera.lookAt(CAM_TARGET)
   })
-
   return null
 }
 
 // ── Local Player Controller ───────────────────────────────────────────────────
-interface ControllerProps {
-  faction:         string
-  onNearTerminal:  (v: boolean) => void
-  onInteracting:   (v: boolean) => void
-}
+function LocalPlayerController({ faction, onNearStation }: {
+  faction: string
+  onNearStation: (st: StationInfo | null) => void
+}) {
+  const keys      = useKeyboard()
+  const facingRef = useRef(0)
+  const lastSent  = useRef(0)
+  const groupRef  = useRef<THREE.Group>(null)
 
-function LocalPlayerController({ faction, onNearTerminal, onInteracting }: ControllerProps) {
-  const keys         = useKeyboard()
-  const facingRef    = useRef(0)
-  const lastSent     = useRef(0)
-  const isInteract   = useRef(false)
-  const qWasDown     = useRef(false)
-  const groupRef     = useRef<THREE.Group>(null)
-
-  // Reset position each time this component mounts (new game session)
   useEffect(() => {
     localPos.set(0, 0, 6)
     return () => { localPos.set(0, 0, 6) }
   }, [])
 
   useFrame((_, delta) => {
-    const k  = keys.current
+    const k = keys.current
     let dx = 0, dz = 0
 
     if (k['KeyW'] || k['ArrowUp'])    dz -= 1
@@ -305,50 +246,53 @@ function LocalPlayerController({ faction, onNearTerminal, onInteracting }: Contr
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
       const gs = useGameRoom.getState()
-      const speedMult = (faction === 'workforce' && gs.activeEffects.speedBoostActive) ? 1.3 : 1.0
-      localPos.x = Math.max(-ROOM_HALF, Math.min(ROOM_HALF, localPos.x + dx * SPEED * speedMult * delta))
+      const speedMult = (faction === 'workforce' && gs.activeEffects.workforceSpeedActive) ? 1.3 : 1.0
+      localPos.x = Math.max(-ROOM_HALF,     Math.min(ROOM_HALF,     localPos.x + dx * SPEED * speedMult * delta))
       localPos.z = Math.max(-ROOM_HALF_Z_N, Math.min(ROOM_HALF_Z_S, localPos.z + dz * SPEED * speedMult * delta))
       facingRef.current = Math.atan2(dx, dz)
     }
 
-    // Move mesh directly — avoids stale prop closure issue
     if (groupRef.current) {
       groupRef.current.position.set(localPos.x, 0, localPos.z)
       groupRef.current.rotation.y = facingRef.current
     }
 
-    // Proximity to terminal
-    const dx2 = localPos.x - TERMINAL_X
-    const dz2 = localPos.z - TERMINAL_Z
-    const nearTerminal = Math.sqrt(dx2 * dx2 + dz2 * dz2) < INTERACT_R
-    onNearTerminal(nearTerminal)
+    // Station proximity
+    const gs = useGameRoom.getState()
+    const myRole = gs.myRole
+    const nearStation = gs.stations.find(st => {
+      if (!st.taskId) return false
+      const sx = localPos.x - st.x
+      const sz = localPos.z - st.z
+      return Math.sqrt(sx * sx + sz * sz) < INTERACT_R
+    }) ?? null
 
-    // E key interaction
-    const wantsInteract = nearTerminal && !!k['KeyE']
-    if (wantsInteract !== isInteract.current) {
-      isInteract.current = wantsInteract
-      onInteracting(wantsInteract)
-      useGameRoom.getState().room?.send(wantsInteract ? 'task_start' : 'task_stop', {})
-    }
+    onNearStation(nearStation)
 
-    // Q key ability (edge-triggered — fires once per press)
-    if (k['KeyQ'] && !qWasDown.current) {
-      qWasDown.current = true
-      useGameRoom.getState().room?.send('use_ability', {})
-      useGameRoom.getState().setMyLastAbilityTime(Date.now())
+    // Hold-E station interaction
+    const wantsHold = nearStation && !!k['KeyE']
+    const currentHold = gs.holdingStationId
+
+    if (wantsHold && nearStation && currentHold !== nearStation.stationId) {
+      const taskDef = TASK_DEFS.find(t => t.id === nearStation.taskId && t.role === myRole)
+      if (taskDef && !gs.completedTasks.has(nearStation.taskId as TaskId)) {
+        gs.setHolding(nearStation.stationId)
+        gs.room?.send('task_hold_start', { stationId: nearStation.stationId })
+      }
+    } else if (!wantsHold && currentHold) {
+      gs.setHolding(null)
+      gs.room?.send('task_hold_cancel', {})
     }
-    if (!k['KeyQ']) qWasDown.current = false
 
     // Throttled position send
     const now = performance.now()
     if (now - lastSent.current > SEND_MS) {
-      useGameRoom.getState().room?.send('move', { x: localPos.x, z: localPos.z, facing: facingRef.current })
+      gs.room?.send('move', { x: localPos.x, z: localPos.z, facing: facingRef.current })
       lastSent.current = now
     }
   })
 
   const color = faction === 'opposition' ? '#ef4444' : '#6D28D9'
-
   return (
     <group ref={groupRef} position={[0, 0, 6]}>
       <mesh position={[0, 0.85, 0]} castShadow>
@@ -368,143 +312,127 @@ function LocalPlayerController({ faction, onNearTerminal, onInteracting }: Contr
 }
 
 // ── Scene root ────────────────────────────────────────────────────────────────
-interface SceneProps {
-  onNearTerminal: (v: boolean) => void
-  onInteracting:  (v: boolean) => void
-  gameOver:       boolean
-}
+function Scene({ onNearStation, gameOver }: {
+  onNearStation: (st: StationInfo | null) => void
+  gameOver:      boolean
+}) {
+  const { players, myFaction, room, activeEffects, stations, completedTasks, holdingStationId } = useGameRoom()
 
-function Scene({ onNearTerminal, onInteracting, gameOver }: SceneProps) {
-  const { players, myFaction, room, terminalProgress, pingMarkers, activeEffects } = useGameRoom()
-
-  // Sync server state → store while in game
   useEffect(() => {
     if (!room) return
+
     const unsub = room.onStateChange((state: any) => {
       const gs = useGameRoom.getState()
       gs.setPlayers(
         Array.from((state.players as Map<string, any>).values()).map((p: any) => ({
           sessionId: p.sessionId,
           name:      p.name,
-          x:         p.x   ?? 0,
-          z:         p.z   ?? 0,
-          facing:    p.facing ?? 0,
+          x:         p.x      ?? 0,
+          z:         p.z      ?? 0,
+          facing:    p.facing  ?? 0,
           faction:   p.faction ?? '',
-          role:      p.role ?? '',
+          role:      p.role    ?? '',
           connected: p.connected,
-          isBot:     p.isBot ?? false,
+          isBot:     p.isBot   ?? false,
           disguised: p.disguised ?? false,
+          slowed:    p.slowed    ?? false,
         }))
       )
-      gs.setTerminalProgress(state.terminalProgress ?? 50)
-      // Sync schema-tracked effect flags
-      const curr = gs.activeEffects
-      if (state.trapPlanted !== curr.trapPlanted || state.lockdownActive !== curr.lockdownActive) {
-        gs.setActiveEffects({ ...curr, trapPlanted: !!state.trapPlanted, lockdownActive: !!state.lockdownActive })
+      if (state.lockdownActive !== undefined) {
+        const curr = gs.activeEffects
+        if (curr.lockdownActive !== !!state.lockdownActive) {
+          gs.setActiveEffects({ ...curr, lockdownActive: !!state.lockdownActive })
+        }
       }
     })
 
-    room.onMessage('game_end', (data: { winner: string; reason: string }) => {
-      useGameRoom.getState().setGameEnd(data.winner, data.reason)
+    room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
+      useGameRoom.getState().setStations(data.stations)
+    })
+
+    room.onMessage('task_complete', (data: { taskId: TaskId; role: string; effectDesc: string; meterGain: number }) => {
+      const gs = useGameRoom.getState()
+      gs.completeTask(data.taskId)
+      gs.addToast({ role: data.role, effectDesc: data.effectDesc, meterGain: data.meterGain, expiresAt: Date.now() + 4000 })
+      gs.addIncident(`${data.role.replace('_', ' ')}: ${data.effectDesc}`, 'info')
+    })
+
+    room.onMessage('meter_update', (data: { workforce: number; opposition: number }) => {
+      useGameRoom.getState().setMeters(data.workforce, data.opposition)
+    })
+
+    room.onMessage('monitor_snapshot', (data: { rackA: number; rackB: number; rackC: number }) => {
+      useGameRoom.getState().setMonitorSnapshot(data)
     })
 
     room.onMessage('effect_update', (data: any) => {
       useGameRoom.getState().setActiveEffects(data)
     })
 
-    room.onMessage('hr_ping', (data: { positions: {sessionId: string; x: number; z: number}[]; duration: number }) => {
-      const gs = useGameRoom.getState()
-      gs.addPings(data.positions.map(p => ({ x: p.x, z: p.z, expiresAt: Date.now() + data.duration, pingType: 'hr' as const })))
+    room.onMessage('game_end', (data: { winner: string; reason: string }) => {
+      useGameRoom.getState().setGameEnd(data.winner, data.reason)
     })
 
-    room.onMessage('spy_sweep', (data: { positions: {sessionId: string; x: number; z: number}[]; duration: number }) => {
-      const gs = useGameRoom.getState()
-      gs.addPings(data.positions.map(p => ({ x: p.x, z: p.z, expiresAt: Date.now() + data.duration, pingType: 'spy' as const })))
+    room.onMessage('incident', (data: { message: string; severity: string; time: string }) => {
+      useGameRoom.getState().addIncident(data.message, (data.severity as any) ?? 'info', data.time)
     })
 
-    // Purge expired pings every 2s
-    const pingInterval = setInterval(() => useGameRoom.getState().clearExpiredPings(), 2_000)
-
-    return () => {
-      if (typeof unsub === 'function') unsub()
-      clearInterval(pingInterval)
-    }
+    return () => { if (typeof unsub === 'function') unsub() }
   }, [room])
 
-  const mySessionId = room?.sessionId
+  const myRole       = useGameRoom(s => s.myRole)
+  const mySessionId  = room?.sessionId
 
   return (
     <>
       <ambientLight intensity={0.35} color="#8080cc" />
-      <directionalLight position={[8, 14, 8]} intensity={0.9} castShadow
-        shadow-mapSize={[1024, 1024]} />
+      <directionalLight position={[8, 14, 8]} intensity={0.9} castShadow shadow-mapSize={[1024, 1024]} />
 
       <FollowCamera />
 
-      <OfficeDungeon progress={terminalProgress} />
+      <OfficeDungeon lockdown={activeEffects.lockdownActive} />
 
-      {/* Remote players (and bots) */}
-      {players
-        .filter(p => p.sessionId !== mySessionId)
-        .map(p => (
-          <PlayerMesh
-            key={p.sessionId}
-            x={p.x} z={p.z} facing={p.facing}
-            faction={p.faction}
-            isLocal={false}
-            disguised={p.disguised}
-          />
-        ))
-      }
+      {/* Workstations */}
+      {stations.map(st => {
+        const hasMyTask = !!myRole && !!st.taskId && TASK_DEFS.some(t => t.id === st.taskId && t.role === myRole)
+        const isHolding = holdingStationId === st.stationId
+        const isComplete = !!st.taskId && completedTasks.has(st.taskId)
+        return (
+          <Workstation key={st.stationId} station={st} hasMyTask={hasMyTask} isHolding={isHolding} isComplete={isComplete} />
+        )
+      })}
 
-      {/* Ping markers (HR / Spy position reveals) */}
-      {pingMarkers
-        .filter(pm => pm.expiresAt > Date.now())
-        .map(pm => (
-          <mesh key={pm.id} position={[pm.x, 0.05, pm.z]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[0.35, 0.55, 24]} />
-            <meshStandardMaterial
-              color={pm.pingType === 'hr' ? '#f59e0b' : '#38bdf8'}
-              emissive={pm.pingType === 'hr' ? '#f59e0b' : '#38bdf8'}
-              emissiveIntensity={1.5}
-              transparent opacity={0.85}
-            />
-          </mesh>
-        ))
-      }
-
-      {/* Lockdown barrier glow at server room entrance */}
-      {activeEffects.lockdownActive && (
-        <mesh position={[0, 1.5, -7.1]}>
-          <boxGeometry args={[4, 3, 0.1]} />
-          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.6} transparent opacity={0.35} />
-        </mesh>
-      )}
+      {/* Remote players */}
+      {players.filter(p => p.sessionId !== mySessionId).map(p => (
+        <PlayerMesh
+          key={p.sessionId}
+          x={p.x} z={p.z} facing={p.facing}
+          faction={p.faction} isLocal={false} disguised={p.disguised}
+        />
+      ))}
 
       {/* Local player */}
       {!gameOver && (
         <LocalPlayerController
           faction={myFaction ?? 'workforce'}
-          onNearTerminal={onNearTerminal}
-          onInteracting={onInteracting}
+          onNearStation={onNearStation}
         />
       )}
     </>
   )
 }
 
-// ── GameWorld component (exported) ────────────────────────────────────────────
+// ── GameWorld (exported) ──────────────────────────────────────────────────────
 export interface GameWorldProps {
-  onNearTerminal: (v: boolean) => void
-  onInteracting:  (v: boolean) => void
-  gameOver:       boolean
+  onNearStation: (st: StationInfo | null) => void
+  gameOver?:     boolean
 }
 
-export default function GameWorld({ onNearTerminal, onInteracting, gameOver }: GameWorldProps) {
+export default function GameWorld({ onNearStation, gameOver = false }: GameWorldProps) {
   return (
     <Canvas shadows camera={{ fov: 50, near: 0.1, far: 300, position: [16, 14, 22] }}
       style={{ position: 'fixed', inset: 0, zIndex: 0 }}>
-      <Scene onNearTerminal={onNearTerminal} onInteracting={onInteracting} gameOver={gameOver} />
+      <Scene onNearStation={onNearStation} gameOver={gameOver} />
     </Canvas>
   )
 }
