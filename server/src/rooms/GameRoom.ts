@@ -3,12 +3,19 @@ import { GameState, Player } from './GameState'
 import {
   WORKFORCE_ROLES,
   OPPOSITION_ROLES,
-  ABILITY_COOLDOWNS_MS,
+  TASK_METER_GAIN,
+  METER_DEGRADE_INTERVAL_MS,
+  RACK_DEGRADE_INTERVAL_MS,
   type PlayerRole,
   type RoomOptions,
+  type TaskId,
+  type StationInfo,
+  type ZoneId,
 } from '../../../shared/src/types'
+import { TASK_DEFS, assignStations } from '../../../shared/src/tasks'
 
 const OPPOSITION_RATIO = 0.25
+const INTERACT_R       = 2.5
 
 const BOT_NAMES = [
   'AGENT-7', 'UNIT-X', 'PROTO-9', 'GHOST-3', 'SIGMA-1',
@@ -16,273 +23,420 @@ const BOT_NAMES = [
 ]
 
 interface ActiveEffects {
-  hotfixUntil:     number   // DevOps: 2x repair speed
-  speedBoostUntil: number   // Management: +30% move speed (broadcast to clients)
-  frozenUntil:     number   // Finance: opposition cooldowns x2
-  marketingUntil:  number   // Marketing: opposition hack rate halved
-  lockdownUntil:   number   // Admin: opposition can't use terminal
-  trapActiveUntil: number   // Saboteur: trap triggered, reverses workforce repair
-  insiderUsed:     Set<string>
+  workforceSpeedUntil:     number
+  lockdownUntil:           number
+  rackDegradePausedUntil:  number
+  ciPipelineUntil:         number
+  ciPipelineDisabled:      boolean
+  workforceHoldSlowUntil:  number
+  hackerCorruptionUntil:   number
+  oppositionHoldSlowUntil: number
+  extraOppDegradeUntil:    number
+  oppMeterGainMultUntil:   number
+  oppMeterGainMult:        number
+}
+
+interface StationState {
+  info:          StationInfo
+  disabledUntil: number
+  completedBy:   string | null
+}
+
+interface HoldState {
+  stationId: string
+  startedAt: number
+  holdMs:    number
+}
+
+type BotAI = {
+  mode:          'wander' | 'work'
+  workUntil:     number
+  targetStation: string | null
 }
 
 export class GameRoom extends Room<GameState> {
   maxClients = 10
-  private botCleanup: (() => void) | null = null
-  private taskUsers = new Set<string>()
-  private abilityCooldowns = new Map<string, number>()
+  private botAI     = new Map<string, BotAI>()
+  private stations  = new Map<string, StationState>()
+  private holdState = new Map<string, HoldState>()
   private effects: ActiveEffects = {
-    hotfixUntil:     0,
-    speedBoostUntil: 0,
-    frozenUntil:     0,
-    marketingUntil:  0,
-    lockdownUntil:   0,
-    trapActiveUntil: 0,
-    insiderUsed:     new Set(),
+    workforceSpeedUntil:     0,
+    lockdownUntil:           0,
+    rackDegradePausedUntil:  0,
+    ciPipelineUntil:         0,
+    ciPipelineDisabled:      false,
+    workforceHoldSlowUntil:  0,
+    hackerCorruptionUntil:   0,
+    oppositionHoldSlowUntil: 0,
+    extraOppDegradeUntil:    0,
+    oppMeterGainMultUntil:   0,
+    oppMeterGainMult:        1.0,
   }
-
-  private botAI = new Map<string, { mode: 'wander' | 'work'; workUntil: number }>()
 
   onCreate(options: Partial<RoomOptions>) {
     this.setState(new GameState())
-    this.state.mapSize  = options.mapSize ?? 'medium'
-    this.state.mapSeed  = Math.random().toString(36).slice(2, 8).toUpperCase()
+    this.state.mapSize = options.mapSize ?? 'medium'
+    this.state.mapSeed = Math.random().toString(36).slice(2, 8).toUpperCase()
 
-    // ── Message handlers ────────────────────────────────────────────────────
+    // ── Message handlers ─────────────────────────────────────────────────────
 
     this.onMessage('move', (client: Client, data: { x: number; z: number; facing?: number }) => {
       const player = this.state.players.get(client.sessionId)
       if (!player) return
-      player.x      = data.x
-      player.z      = data.z
-      player.facing = data.facing ?? player.facing
+      player.x = data.x
+      player.z = data.z
+      if (data.facing !== undefined) player.facing = data.facing
+
+      // Cancel hold if player strays too far
+      const hold = this.holdState.get(client.sessionId)
+      if (hold) {
+        const st = this.stations.get(hold.stationId)
+        if (st) {
+          const dx = data.x - st.info.x
+          const dz = data.z - st.info.z
+          if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) {
+            this.holdState.delete(client.sessionId)
+          }
+        }
+      }
     })
 
     this.onMessage('start_game', (client: Client) => {
       const players = Array.from(this.state.players.values())
-      const host = players.find(p => !p.isBot)
+      const host = players.filter(p => !p.isBot)[0]
       if (host?.sessionId !== client.sessionId) return
       if (this.state.phase !== 'waiting') return
 
       this.state.phase = 'playing'
 
-      // Insiders start disguised as Workforce from game start
-      this.state.players.forEach(p => {
-        if (p.role === 'insider') p.disguised = true
-      })
-
-      this.broadcast('game_start', { seed: this.state.mapSeed, mapSize: this.state.mapSize })
-      this.broadcastEffects()
-      console.log(`[GameRoom] Game started by ${client.sessionId}`)
-    })
-
-    this.onMessage('task_start', (client: Client) => {
-      const player = this.state.players.get(client.sessionId)
-      if (!player) return
-      // Admin lockdown blocks opposition from using terminal
-      if (player.faction === 'opposition' && this.effects.lockdownUntil > this.clock.currentTime) {
-        client.send('incident', {
-          message: 'SERVER ROOM LOCKED — Admin lockdown active',
-          severity: 'danger',
-          time: timestamp(),
-        })
-        return
+      const mapSize = this.state.mapSize as 'small' | 'medium' | 'large'
+      const stationList = assignStations(this.state.mapSeed, mapSize, TASK_DEFS)
+      for (const info of stationList) {
+        this.stations.set(info.stationId, { info, disabledUntil: 0, completedBy: null })
       }
-      this.taskUsers.add(client.sessionId)
+
+      this.state.players.forEach(p => { if (p.role === 'insider') p.disguised = true })
+
+      this.broadcast('game_start', { seed: this.state.mapSeed, mapSize })
+      this.broadcast('station_list', { stations: stationList })
+      this.broadcastEffects()
+      console.log(`[GameRoom] Game started · ${stationList.length} stations · seed ${this.state.mapSeed}`)
     })
 
-    this.onMessage('task_stop', (client: Client) => {
-      this.taskUsers.delete(client.sessionId)
-    })
-
-    this.onMessage('use_ability', (client: Client) => {
+    this.onMessage('task_hold_start', (client: Client, data: { stationId: string }) => {
       const player = this.state.players.get(client.sessionId)
       if (!player || this.state.phase !== 'playing') return
 
+      const station = this.stations.get(data.stationId)
+      if (!station || station.completedBy) return
+
+      if (station.disabledUntil > this.clock.currentTime) {
+        client.send('incident', { message: 'Station offline', severity: 'warn', time: ts() })
+        return
+      }
+
+      // Admin lockdown — block opposition from server room
+      if (player.faction === 'opposition' && station.info.zone === 'server_room' &&
+          this.effects.lockdownUntil > this.clock.currentTime) {
+        client.send('incident', { message: 'SERVER ROOM LOCKED DOWN', severity: 'danger', time: ts() })
+        return
+      }
+
+      const taskDef = station.info.taskId ? TASK_DEFS.find(t => t.id === station.info.taskId) : null
+      if (!taskDef || taskDef.role !== player.role) return
+
       const now = this.clock.currentTime
-      const baseCd = ABILITY_COOLDOWNS_MS[player.role as PlayerRole] ?? 60_000
+      let holdMs = taskDef.holdMs
 
-      // Finance freeze doubles opposition cooldowns
-      const effectiveCd = (player.faction === 'opposition' && this.effects.frozenUntil > now)
-        ? baseCd * 2 : baseCd
+      if (player.faction === 'workforce') {
+        if (this.effects.workforceHoldSlowUntil > now) holdMs *= 2
+        if (taskDef.id === 'it_repair_terminal') {
+          if (!this.effects.ciPipelineDisabled && this.effects.ciPipelineUntil > now) holdMs = Math.ceil(holdMs / 2)
+          if (this.effects.hackerCorruptionUntil > now) holdMs *= 2
+        }
+      } else {
+        if (this.effects.oppositionHoldSlowUntil > now) holdMs *= 2
+      }
 
-      const lastUsed = this.abilityCooldowns.get(client.sessionId) ?? 0
-      if (now - lastUsed < effectiveCd) return  // still on cooldown
-
-      // Insider: once per match
-      if (player.role === 'insider' && this.effects.insiderUsed.has(client.sessionId)) return
-
-      this.abilityCooldowns.set(client.sessionId, now)
-      this.broadcast('ability_used', { sessionId: client.sessionId, role: player.role })
-      this.executeAbility(player, client.sessionId)
+      this.holdState.set(client.sessionId, { stationId: data.stationId, startedAt: now, holdMs })
     })
 
-    // ── Task progress tick ───────────────────────────────────────────────────
+    this.onMessage('task_hold_cancel', () => {
+      // client.sessionId available via closure not needed here — but we need the param
+    })
+    // Re-register with correct signature
+    this.onMessage('task_hold_cancel', (client: Client) => {
+      this.holdState.delete(client.sessionId)
+    })
+
+    this.onMessage('badge_renewal_done', (client: Client) => {
+      const p = this.state.players.get(client.sessionId) as any
+      if (p) { p.badgeLockout = false }
+    })
+
+    // ── Hold progress tick (200ms) ───────────────────────────────────────────
     this.clock.setInterval(() => {
       if (this.state.phase !== 'playing') return
       const now = this.clock.currentTime
-      let changed = false
-
-      // Check if Saboteur trap should trigger (Workforce starts repairing)
-      const workforceWorking = Array.from(this.taskUsers).some(sid => {
-        const p = this.state.players.get(sid)
-        return p?.faction === 'workforce'
-      })
-      if (workforceWorking && this.state.trapPlanted) {
-        this.state.trapPlanted = false
-        this.effects.trapActiveUntil = now + 6_000
-        this.broadcastEffects()
-      }
-
-      const hotfix  = this.effects.hotfixUntil > now
-      const trapped = this.effects.trapActiveUntil > now
-      const mktBlitz = this.effects.marketingUntil > now
-
-      for (const sid of this.taskUsers) {
-        const player = this.state.players.get(sid)
-        if (!player) continue
-        const rate = hotfix && player.faction === 'workforce' ? 4 : 2
-        if (player.faction === 'workforce') {
-          this.state.terminalProgress = trapped
-            ? Math.max(0,   this.state.terminalProgress - rate)
-            : Math.min(100, this.state.terminalProgress + rate)
-        } else {
-          const hackRate = mktBlitz ? 1 : 2  // Marketing halves hack rate
-          this.state.terminalProgress = Math.max(0, this.state.terminalProgress - hackRate)
-        }
-        changed = true
-      }
-
-      if (changed) {
-        this.checkEndConditions()
-        // Sync lock/trap schema flags
-        const effectsChanged =
-          (this.state.lockdownActive !== (this.effects.lockdownUntil > now)) ||
-          (this.state.trapPlanted !== this.state.trapPlanted) // already synced above
-        if (effectsChanged) {
-          this.state.lockdownActive = this.effects.lockdownUntil > now
+      for (const [sessionId, hold] of this.holdState) {
+        if (now - hold.startedAt >= hold.holdMs) {
+          this.holdState.delete(sessionId)
+          this.completeTask(sessionId, hold.stationId)
         }
       }
     }, 200)
 
-    // Sync lockdown state every second
+    // ── Meter degradation ────────────────────────────────────────────────────
     this.clock.setInterval(() => {
-      const lockNow = this.effects.lockdownUntil > this.clock.currentTime
-      if (this.state.lockdownActive !== lockNow) {
-        this.state.lockdownActive = lockNow
-        if (!lockNow) this.broadcastEffects() // broadcast when lockdown ends
+      if (this.state.phase !== 'playing') return
+      const now = this.clock.currentTime
+      this.state.workforceMeter  = Math.max(0, this.state.workforceMeter  - 1)
+      this.state.oppositionMeter = Math.max(0, this.state.oppositionMeter - 1)
+      if (this.effects.extraOppDegradeUntil > now) {
+        this.state.oppositionMeter = Math.max(0, this.state.oppositionMeter - 1)
+      }
+      this.broadcast('meter_update', { workforce: this.state.workforceMeter, opposition: this.state.oppositionMeter })
+    }, METER_DEGRADE_INTERVAL_MS)
+
+    // ── Rack degradation ─────────────────────────────────────────────────────
+    this.clock.setInterval(() => {
+      if (this.state.phase !== 'playing') return
+      if (this.effects.rackDegradePausedUntil > this.clock.currentTime) return
+      this.state.rackHealthA = Math.max(0, this.state.rackHealthA - 1)
+      this.state.rackHealthB = Math.max(0, this.state.rackHealthB - 1)
+      this.state.rackHealthC = Math.max(0, this.state.rackHealthC - 1)
+    }, RACK_DEGRADE_INTERVAL_MS)
+
+    // ── Lockdown sync ────────────────────────────────────────────────────────
+    this.clock.setInterval(() => {
+      const locked = this.effects.lockdownUntil > this.clock.currentTime
+      if (this.state.lockdownActive !== locked) {
+        this.state.lockdownActive = locked
+        if (!locked) this.broadcastEffects()
       }
     }, 1_000)
 
     const botCount = Math.min(Math.max(0, options.botCount ?? 0), 9)
     if (botCount > 0) this.spawnBots(botCount)
 
-    console.log(`[GameRoom] Created room "${options.roomName ?? 'Office'}" · seed ${this.state.mapSeed} · bots ${botCount}`)
+    console.log(`[GameRoom] Created · seed ${this.state.mapSeed} · bots ${botCount}`)
   }
 
-  // ── Ability execution ────────────────────────────────────────────────────────
+  // ── Task completion ───────────────────────────────────────────────────────
 
-  private executeAbility(player: Player, sessionId: string) {
+  private completeTask(sessionId: string, stationId: string) {
+    const station = this.stations.get(stationId)
+    const player  = this.state.players.get(sessionId)
+    if (!station || !player || station.completedBy) return
+
+    station.completedBy = sessionId
+
+    const taskDef = station.info.taskId ? TASK_DEFS.find(t => t.id === station.info.taskId) : null
+    if (!taskDef) return
+
     const now = this.clock.currentTime
 
-    switch (player.role as PlayerRole) {
+    if (taskDef.meterGain > 0) {
+      if (player.faction === 'workforce') {
+        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + taskDef.meterGain)
+      } else {
+        const mult = this.effects.oppMeterGainMultUntil > now ? this.effects.oppMeterGainMult : 1.0
+        this.state.oppositionMeter = Math.min(100, this.state.oppositionMeter + taskDef.meterGain * mult)
+      }
+    }
 
-      // Workforce ──────────────────────────────────────────────────
+    this.applyTaskEffect(taskDef.id, sessionId, player)
 
-      case 'it':
-        this.state.terminalProgress = Math.min(100, this.state.terminalProgress + 20)
-        this.checkEndConditions()
+    this.broadcast('task_complete', {
+      taskId:     taskDef.id,
+      role:       player.role,
+      effectDesc: taskDef.effectDesc,
+      meterGain:  taskDef.meterGain,
+    })
+    this.broadcast('meter_update', { workforce: this.state.workforceMeter, opposition: this.state.oppositionMeter })
+    this.broadcastEffects()
+    this.checkWinCondition()
+
+    console.log(`[GameRoom] ${player.name} (${player.role}) completed: ${taskDef.id}`)
+  }
+
+  private applyTaskEffect(taskId: TaskId, sessionId: string, player: Player) {
+    const now = this.clock.currentTime
+
+    switch (taskId) {
+      case 'it_repair_terminal':
+        this.effects.hackerCorruptionUntil = 0
         break
 
-      case 'devops':
-        this.effects.hotfixUntil = now + 8_000
-        this.broadcastEffects()
-        this.clock.setTimeout(() => this.broadcastEffects(), 8_000)
+      case 'it_fix_server':
+        this.state.rackHealthA = Math.min(100, this.state.rackHealthA + 40)
+        this.effects.rackDegradePausedUntil = now + 180_000
         break
 
-      case 'hr': {
-        // Reveal non-disguised opposition to all workforce
-        const opp = Array.from(this.state.players.values())
-          .filter(p => p.faction === 'opposition' && !p.disguised)
-          .map(p => ({ sessionId: p.sessionId, x: p.x, z: p.z }))
+      case 'devops_ci_pipeline':
+        if (!this.effects.ciPipelineDisabled) {
+          this.effects.ciPipelineUntil = now + 90_000
+          this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
+        }
+        break
+
+      case 'devops_system_monitor':
         this.state.players.forEach((p, sid) => {
-          if (p.faction === 'workforce' && p.connected && !p.isBot) {
+          if (p.role === 'admin' && p.connected && !p.isBot) {
             const c = this.clients.find(cl => cl.sessionId === sid)
-            c?.send('hr_ping', { positions: opp, duration: 5_000 })
+            c?.send('monitor_snapshot', {
+              rackA: this.state.rackHealthA,
+              rackB: this.state.rackHealthB,
+              rackC: this.state.rackHealthC,
+            })
           }
         })
         break
-      }
 
-      case 'finance':
-        this.effects.frozenUntil = now + 10_000
-        this.broadcastEffects()
-        this.clock.setTimeout(() => this.broadcastEffects(), 10_000)
+      case 'hr_security_vetting':
+      case 'hr_policy_update':
+        this.effects.oppositionHoldSlowUntil = now + 90_000
+        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
         break
 
-      case 'marketing':
-        this.effects.marketingUntil = now + 8_000
-        this.broadcastEffects()
-        this.clock.setTimeout(() => this.broadcastEffects(), 8_000)
+      case 'finance_budget_freeze':
+        this.effects.extraOppDegradeUntil = now + 120_000
         break
 
-      case 'admin':
-        this.effects.lockdownUntil = now + 12_000
+      case 'finance_audit_trail':
+        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + 8)
+        break
+
+      case 'marketing_pr_campaign':
+        this.effects.oppMeterGainMult      = 0.75
+        this.effects.oppMeterGainMultUntil = now + 90_000
+        this.clock.setTimeout(() => {
+          this.effects.oppMeterGainMult = 1.0
+          this.broadcastEffects()
+        }, 90_000)
+        break
+
+      case 'marketing_crisis_control':
+        if (this.effects.workforceHoldSlowUntil > now)  this.effects.workforceHoldSlowUntil  = 0
+        else if (this.effects.hackerCorruptionUntil > now) this.effects.hackerCorruptionUntil = 0
+        break
+
+      case 'admin_lockdown':
+        this.effects.lockdownUntil = now + 90_000
         this.state.lockdownActive  = true
-        this.broadcastEffects()
         this.clock.setTimeout(() => {
           this.state.lockdownActive = false
           this.broadcastEffects()
-        }, 12_000)
-        // Kick out any opposition currently at terminal
+        }, 90_000)
+        break
+
+      case 'admin_keycard_audit': {
+        let lastOpp: Player | null = null
+        for (const p of this.state.players.values()) {
+          if (p.faction === 'opposition') { lastOpp = p; break }
+        }
+        const entry = lastOpp
+          ? `Badge activity detected — zone unknown — ${ts()}`
+          : 'No recent badge activity'
         this.state.players.forEach((p, sid) => {
-          if (p.faction === 'opposition') this.taskUsers.delete(sid)
-        })
-        break
-
-      case 'management':
-        this.effects.speedBoostUntil = now + 10_000
-        this.broadcastEffects()
-        this.clock.setTimeout(() => this.broadcastEffects(), 10_000)
-        break
-
-      // Opposition ──────────────────────────────────────────────────
-
-      case 'hacker':
-        this.state.terminalProgress = Math.max(0, this.state.terminalProgress - 20)
-        this.checkEndConditions()
-        break
-
-      case 'social_engineer':
-        player.disguised = true
-        this.clock.setTimeout(() => {
-          player.disguised = false
-        }, 15_000)
-        break
-
-      case 'spy': {
-        const wf = Array.from(this.state.players.values())
-          .filter(p => p.faction === 'workforce')
-          .map(p => ({ sessionId: p.sessionId, x: p.x, z: p.z }))
-        this.state.players.forEach((p, sid) => {
-          if (p.faction === 'opposition' && p.connected && !p.isBot) {
+          if (p.role === 'admin' && p.connected && !p.isBot) {
             const c = this.clients.find(cl => cl.sessionId === sid)
-            c?.send('spy_sweep', { positions: wf, duration: 3_000 })
+            c?.send('keycard_log', { entry })
           }
         })
         break
       }
 
-      case 'saboteur':
-        this.state.trapPlanted = true
-        this.broadcastEffects()
+      case 'mgmt_sprint_planning':
+        this.effects.workforceSpeedUntil = now + 90_000
+        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
         break
 
-      case 'insider':
-        this.effects.insiderUsed.add(sessionId)
-        player.disguised     = false    // reveal themselves
-        this.effects.lockdownUntil = 0  // bypass any active lockdown
-        this.state.lockdownActive  = false
-        this.broadcastEffects()
+      case 'mgmt_resource_allocation':
+        this.state.workforceMeter = Math.min(100, this.state.workforceMeter + 10)
+        break
+
+      case 'hacker_zero_day':
+        this.effects.hackerCorruptionUntil = now + 60_000
+        this.clock.setTimeout(() => this.broadcastEffects(), 60_000)
+        break
+
+      case 'hacker_network_attack':
+        for (const st of this.stations.values()) {
+          if (st.info.taskId === 'it_fix_server') st.disabledUntil = now + 180_000
+        }
+        break
+
+      case 'se_phishing': {
+        const wfPlayers = Array.from(this.state.players.values())
+          .filter(p => p.faction === 'workforce' && p.connected)
+        if (wfPlayers.length > 0) {
+          const target = wfPlayers[Math.floor(Math.random() * wfPlayers.length)]
+          target.slowed = true
+          this.clock.setTimeout(() => { target.slowed = false }, 60_000)
+        }
+        break
+      }
+
+      case 'se_impersonation':
+        player.disguised = true
+        this.clock.setTimeout(() => { player.disguised = false }, 180_000)
+        break
+
+      case 'spy_intercept': {
+        let lastZone = 'unknown'
+        for (const st of this.stations.values()) {
+          if (st.completedBy) {
+            const completer = this.state.players.get(st.completedBy)
+            if (completer?.faction === 'workforce') lastZone = st.info.zone
+          }
+        }
+        this.state.players.forEach((p, sid) => {
+          if (p.faction === 'opposition' && p.connected && !p.isBot) {
+            const c = this.clients.find(cl => cl.sessionId === sid)
+            c?.send('incident', {
+              message: `Intel: Last workforce task in ${lastZone.replace('_', ' ')}`,
+              severity: 'info', time: ts(),
+            })
+          }
+        })
+        break
+      }
+
+      case 'spy_surveillance': {
+        let target: { x: number; z: number } | null = null
+        for (const p of this.state.players.values()) {
+          if (p.faction === 'workforce') { target = { x: p.x, z: p.z }; break }
+        }
+        if (target) {
+          const c = this.clients.find(cl => cl.sessionId === sessionId)
+          c?.send('ghost_camera', { targetX: target.x, targetZ: target.z, duration: 30_000 })
+        }
+        break
+      }
+
+      case 'saboteur_server_logs': {
+        const c = this.clients.find(cl => cl.sessionId === sessionId)
+        c?.send('monitor_snapshot', {
+          rackA: this.state.rackHealthA,
+          rackB: this.state.rackHealthB,
+          rackC: this.state.rackHealthC,
+        })
+        break
+      }
+
+      case 'saboteur_power_cut':
+        this.effects.workforceHoldSlowUntil = now + 90_000
+        this.clock.setTimeout(() => this.broadcastEffects(), 90_000)
+        break
+
+      case 'insider_leak_docs':
+        this.state.workforceMeter = Math.max(0, this.state.workforceMeter - 8)
+        break
+
+      case 'insider_corrupt_backups':
+        this.effects.ciPipelineDisabled = true
+        this.effects.ciPipelineUntil    = 0
         break
     }
   }
@@ -290,86 +444,86 @@ export class GameRoom extends Room<GameState> {
   private broadcastEffects() {
     const now = this.clock.currentTime
     this.broadcast('effect_update', {
-      hotfixActive:    this.effects.hotfixUntil > now,
-      speedBoostActive: this.effects.speedBoostUntil > now,
-      frozenActive:    this.effects.frozenUntil > now,
-      marketingActive: this.effects.marketingUntil > now,
-      lockdownActive:  this.effects.lockdownUntil > now,
-      trapPlanted:     this.state.trapPlanted,
+      workforceSpeedActive: this.effects.workforceSpeedUntil > now,
+      lockdownActive:       this.effects.lockdownUntil > now,
+      workforceHoldSlow:    this.effects.workforceHoldSlowUntil > now,
+      oppositionHoldSlow:   this.effects.oppositionHoldSlowUntil > now,
+      hackerCorruption:     this.effects.hackerCorruptionUntil > now,
+      ciPipelineActive:     !this.effects.ciPipelineDisabled && this.effects.ciPipelineUntil > now,
+      badgeRenewalRequired: false,
     })
   }
 
-  // ── Bot spawning ─────────────────────────────────────────────────────────────
+  // ── Bot spawning ──────────────────────────────────────────────────────────
 
   private spawnBots(count: number) {
     for (let i = 0; i < count; i++) {
-      const bot        = new Player()
-      bot.sessionId    = `bot_${i}`
-      bot.name         = BOT_NAMES[i] ?? `BOT-${i}`
-      bot.isBot        = true
-      bot.connected    = true
-      bot.x            = (Math.random() - 0.5) * 20
-      bot.z            = (Math.random() - 0.5) * 20
-      bot.facing       = Math.random() * Math.PI * 2
+      const bot     = new Player()
+      bot.sessionId = `bot_${i}`
+      bot.name      = BOT_NAMES[i] ?? `BOT-${i}`
+      bot.isBot     = true
+      bot.connected = true
+      bot.x         = (Math.random() - 0.5) * 16
+      bot.z         = (Math.random() - 0.5) * 12
+      bot.facing    = Math.random() * Math.PI * 2
       this.state.players.set(bot.sessionId, bot)
       this.assignRole(bot)
       this.broadcast('incident', {
-        message:  `${bot.name} connected — ${bot.role}/${bot.faction} [BOT]`,
-        severity: 'info',
-        time:     timestamp(),
+        message: `${bot.name} connected — ${bot.role}/${bot.faction} [BOT]`,
+        severity: 'info', time: ts(),
       })
     }
 
-    const interval = this.clock.setInterval(() => {
+    this.clock.setInterval(() => {
       if (this.state.phase !== 'playing') {
-        // Before/after game — just wander
-        this.state.players.forEach((p) => {
+        // Pre-game wander
+        this.state.players.forEach(p => {
           if (!p.isBot) return
-          p.x      = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 3))
-          p.z      = Math.max(-15.5, Math.min(9.0,  p.z + (Math.random() - 0.5) * 3))
+          p.x = clamp(p.x + (Math.random() - 0.5) * 3, -11.5, 11.5)
+          p.z = clamp(p.z + (Math.random() - 0.5) * 3, -15.5,  9.0)
           p.facing = Math.random() * Math.PI * 2
         })
         return
       }
 
-      const TERM_X = 0, TERM_Z = -11.5, INTERACT_R = 2.0
       const now = this.clock.currentTime
-
-      this.state.players.forEach((p) => {
+      this.state.players.forEach(p => {
         if (!p.isBot) return
+        let ai = this.botAI.get(p.sessionId) ?? { mode: 'wander' as const, workUntil: 0, targetStation: null }
 
-        let ai = this.botAI.get(p.sessionId) ?? { mode: 'wander' as const, workUntil: 0 }
-        const dx = TERM_X - p.x
-        const dz = TERM_Z - p.z
-        const dist = Math.sqrt(dx * dx + dz * dz)
-
-        if (ai.mode === 'work') {
-          if (now > ai.workUntil) {
-            // Done — stop working and wander away
-            ai.mode = 'wander'
-            this.taskUsers.delete(p.sessionId)
-            p.x = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 5))
-            p.z = Math.max(-8.0,  Math.min(9.0,  p.z + 3 + Math.random() * 3))
-            p.facing = Math.random() * Math.PI * 2
-          } else if (dist > INTERACT_R) {
-            // Approaching terminal
-            const speed = 2.5
-            p.x = Math.max(-11.5, Math.min(11.5, p.x + (dx / dist) * speed))
-            p.z = Math.max(-15.5, Math.min(9.0,  p.z + (dz / dist) * speed))
-            p.facing = Math.atan2(dx, dz)
+        if (ai.mode === 'work' && ai.targetStation) {
+          const st = this.stations.get(ai.targetStation)
+          if (!st || st.completedBy || now > ai.workUntil) {
+            ai = { mode: 'wander', workUntil: 0, targetStation: null }
+            this.holdState.delete(p.sessionId)
           } else {
-            // At terminal — register as task user
-            this.taskUsers.add(p.sessionId)
-            p.facing = Math.atan2(-p.x, TERM_Z - p.z)
+            const dx   = st.info.x - p.x
+            const dz   = st.info.z - p.z
+            const dist = Math.sqrt(dx * dx + dz * dz)
+            if (dist > INTERACT_R * 0.6) {
+              const speed = 2.5
+              p.x     = clamp(p.x + (dx / dist) * speed, -11.5, 11.5)
+              p.z     = clamp(p.z + (dz / dist) * speed, -15.5,  9.0)
+              p.facing = Math.atan2(dx, dz)
+            } else if (!this.holdState.has(p.sessionId)) {
+              this.holdState.set(p.sessionId, { stationId: ai.targetStation, startedAt: now, holdMs: 4000 })
+            }
           }
         } else {
-          // Wander — 25% chance each tick to start working
-          if (Math.random() < 0.25) {
-            ai.mode = 'work'
-            ai.workUntil = now + 5_000 + Math.random() * 10_000
-          } else {
-            p.x      = Math.max(-11.5, Math.min(11.5, p.x + (Math.random() - 0.5) * 3))
-            p.z      = Math.max(-15.5, Math.min(9.0,  p.z + (Math.random() - 0.5) * 3))
+          if (Math.random() < 0.25 && this.stations.size > 0) {
+            const myTaskIds = new Set(
+              TASK_DEFS.filter(t => t.role === (p.role as PlayerRole)).map(t => t.id)
+            )
+            const candidate = Array.from(this.stations.values()).find(
+              st => !st.completedBy && st.info.taskId && myTaskIds.has(st.info.taskId) && st.disabledUntil <= now
+            )
+            if (candidate) {
+              ai = { mode: 'work', workUntil: now + 15_000, targetStation: candidate.info.stationId }
+            }
+          }
+          if (ai.mode !== 'work') {
+            p.x = clamp(p.x + (Math.random() - 0.5) * 3, -11.5, 11.5)
+            p.z = clamp(p.z + (Math.random() - 0.5) * 3, -15.5,  9.0)
             p.facing = Math.random() * Math.PI * 2
           }
         }
@@ -377,71 +531,52 @@ export class GameRoom extends Room<GameState> {
         this.botAI.set(p.sessionId, ai)
       })
     }, 2000)
-
-    this.botCleanup = () => interval.clear()
   }
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   onJoin(client: Client, options: { name?: string }) {
-    const player = new Player()
+    const player     = new Player()
     player.sessionId = client.sessionId
     player.name      = (options.name ?? `Operative-${client.sessionId.slice(0, 4)}`).slice(0, 20)
     this.state.players.set(client.sessionId, player)
-
     this.assignRole(player)
     client.send('role_assigned', { role: player.role, faction: player.faction })
-
     this.broadcast('incident', {
-      message:  `${player.name} connected — ${player.role}/${player.faction}`,
-      severity: 'info',
-      time:     timestamp(),
+      message: `${player.name} connected — ${player.role}/${player.faction}`,
+      severity: 'info', time: ts(),
     })
-
-    console.log(`[GameRoom] ${player.name} joined as ${player.role} (${player.faction}) — ${this.state.players.size}/${this.maxClients}`)
+    console.log(`[GameRoom] ${player.name} joined as ${player.role} (${player.faction})`)
   }
 
   async onLeave(client: Client, consented: boolean) {
     const player = this.state.players.get(client.sessionId)
     if (!player) return
-
     player.connected = false
-
+    this.holdState.delete(client.sessionId)
     if (!consented) {
       try {
         await this.allowReconnection(client, 10)
         player.connected = true
         return
-      } catch {
-        // Reconnection window expired
-      }
+      } catch { /* expired */ }
     }
-
-    this.broadcast('incident', {
-      message:  `${player.name} disconnected`,
-      severity: 'warn',
-      time:     timestamp(),
-    })
+    this.broadcast('incident', { message: `${player.name} disconnected`, severity: 'warn', time: ts() })
     this.state.players.delete(client.sessionId)
-    this.taskUsers.delete(client.sessionId)
-    this.checkEndConditions()
+    this.checkWinCondition()
   }
 
   onDispose() {
-    if (this.botCleanup) this.botCleanup()
     console.log(`[GameRoom] ${this.roomId} disposed`)
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   private assignRole(player: Player) {
     const all             = Array.from(this.state.players.values())
-    const oppositionCount = all.filter(p => p.faction === 'opposition').length
-    const total           = all.length
-
-    const assignOpposition = total > 2 && oppositionCount / total < OPPOSITION_RATIO
-
-    if (assignOpposition) {
+    const oppCount        = all.filter(p => p.faction === 'opposition').length
+    const assignOpp       = all.length > 2 && oppCount / all.length < OPPOSITION_RATIO
+    if (assignOpp) {
       player.faction = 'opposition'
       player.role    = OPPOSITION_ROLES[Math.floor(Math.random() * OPPOSITION_ROLES.length)]
     } else {
@@ -450,13 +585,10 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private checkEndConditions() {
+  private checkWinCondition() {
     if (this.state.phase !== 'playing') return
-    if (this.state.terminalProgress >= 100) {
-      this.endGame('workforce', 'Terminal fully repaired')
-    } else if (this.state.terminalProgress <= 0) {
-      this.endGame('opposition', 'Terminal successfully hacked')
-    }
+    if (this.state.workforceMeter  >= 100) this.endGame('workforce',  'All workforce tasks complete!')
+    if (this.state.oppositionMeter >= 100) this.endGame('opposition', 'All opposition tasks complete!')
   }
 
   private endGame(winner: string, reason: string) {
@@ -468,6 +600,10 @@ export class GameRoom extends Room<GameState> {
   }
 }
 
-function timestamp() {
+function ts() {
   return new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v))
 }
