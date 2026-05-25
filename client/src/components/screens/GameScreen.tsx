@@ -3,6 +3,7 @@ import { useGameRoom } from '../../store/useGameRoom'
 import { ROLE_LABELS } from '@shared/types'
 import { TASK_DEFS } from '@shared/tasks'
 import GameWorld from '../../game/GameWorld'
+import Minimap from '../../game/Minimap'
 import type { Screen } from '../../App'
 import type { StationInfo } from '@shared/types'
 import styles from './screens.module.css'
@@ -104,6 +105,9 @@ export default function GameScreen({ onNavigate }: Props) {
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <GameWorld onNearStation={handleNearStation} onZoneChange={handleZoneChange} gameOver={false} />
+
+      {/* ── Minimap (bottom-left) ── */}
+      <Minimap />
 
       {/* ── Team meters (bottom centre) ── */}
       <div className={styles.hudMeters}>

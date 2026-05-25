@@ -483,8 +483,8 @@ export class GameRoom extends Room<GameState> {
         // Pre-game wander
         this.state.players.forEach(p => {
           if (!p.isBot) return
-          p.x = clamp(p.x + (Math.random() - 0.5) * 3, -11.5, 11.5)
-          p.z = clamp(p.z + (Math.random() - 0.5) * 3, -15.5,  9.0)
+          p.x = clamp(p.x + (Math.random() - 0.5) * 1.0, -11.5, 11.5)
+          p.z = clamp(p.z + (Math.random() - 0.5) * 1.0, -15.5,  9.0)
           p.facing = Math.random() * Math.PI * 2
         })
         return
@@ -505,36 +505,46 @@ export class GameRoom extends Room<GameState> {
             const dz   = st.info.z - p.z
             const dist = Math.sqrt(dx * dx + dz * dz)
             if (dist > INTERACT_R * 0.6) {
-              const speed = 2.5
-              p.x     = clamp(p.x + (dx / dist) * speed, -11.5, 11.5)
-              p.z     = clamp(p.z + (dz / dist) * speed, -15.5,  9.0)
+              // Walk toward station — max 1.2 units per 500 ms tick (~2.4 u/s)
+              const step = Math.min(dist, 1.2)
+              p.x      = clamp(p.x + (dx / dist) * step, -11.5, 11.5)
+              p.z      = clamp(p.z + (dz / dist) * step, -15.5,  9.0)
               p.facing = Math.atan2(dx, dz)
             } else if (!this.holdState.has(p.sessionId)) {
-              this.holdState.set(p.sessionId, { stationId: ai.targetStation, startedAt: now, holdMs: 4000 })
+              // In range — start hold using the actual task's holdMs
+              const taskDef = st.info.taskId ? TASK_DEFS.find(t => t.id === st.info.taskId) : null
+              const holdMs  = taskDef?.holdMs ?? 4000
+              this.holdState.set(p.sessionId, { stationId: ai.targetStation, startedAt: now, holdMs })
             }
           }
         } else {
-          if (Math.random() < 0.25 && this.stations.size > 0) {
-            const myTaskIds = new Set(
-              TASK_DEFS.filter(t => t.role === (p.role as PlayerRole)).map(t => t.id)
-            )
-            const candidate = Array.from(this.stations.values()).find(
-              st => !st.completedBy && st.info.taskId && myTaskIds.has(st.info.taskId) && st.disabledUntil <= now
-            )
-            if (candidate) {
-              ai = { mode: 'work', workUntil: now + 15_000, targetStation: candidate.info.stationId }
-            }
+          // Always find the nearest eligible station (no random 25% gate)
+          const myTaskIds = new Set(
+            TASK_DEFS.filter(t => t.role === (p.role as PlayerRole)).map(t => t.id)
+          )
+          let best: StationState | null = null
+          let bestDist = Infinity
+          for (const st of this.stations.values()) {
+            if (st.completedBy || !st.info.taskId || !myTaskIds.has(st.info.taskId)) continue
+            if (st.disabledUntil > now) continue
+            const dx = st.info.x - p.x
+            const dz = st.info.z - p.z
+            const d  = dx * dx + dz * dz
+            if (d < bestDist) { bestDist = d; best = st }
           }
-          if (ai.mode !== 'work') {
-            p.x = clamp(p.x + (Math.random() - 0.5) * 3, -11.5, 11.5)
-            p.z = clamp(p.z + (Math.random() - 0.5) * 3, -15.5,  9.0)
+          if (best) {
+            ai = { mode: 'work', workUntil: now + 45_000, targetStation: best.info.stationId }
+          } else {
+            // Nothing left to do — gentle wander
+            p.x = clamp(p.x + (Math.random() - 0.5) * 1.0, -11.5, 11.5)
+            p.z = clamp(p.z + (Math.random() - 0.5) * 1.0, -15.5,  9.0)
             p.facing = Math.random() * Math.PI * 2
           }
         }
 
         this.botAI.set(p.sessionId, ai)
       })
-    }, 2000)
+    }, 500)
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
