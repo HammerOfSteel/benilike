@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { ScreenShell } from '../shared/ScreenShell'
 import { colyseusClient } from '../../services/colyseusClient'
 import { useGameRoom } from '../../store/useGameRoom'
@@ -32,6 +32,10 @@ export default function NewGameScreen({ onNavigate }: Props) {
   const [creating, setCreating]         = useState(false)
   const [error, setError]               = useState('')
   const { setRoom }                     = useGameRoom()
+  const lobbyTimerRef                   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cancel the auto-navigate timer if this screen unmounts before it fires
+  useEffect(() => () => { if (lobbyTimerRef.current) clearTimeout(lobbyTimerRef.current) }, [])
 
   const handleCreate = async () => {
     setCreating(true)
@@ -53,7 +57,7 @@ export default function NewGameScreen({ onNavigate }: Props) {
         useGameRoom.getState().setGameEnd(data.winner, data.reason)
       })
       setRoomCode(room.id.slice(0, 8).toUpperCase())
-      setTimeout(() => onNavigate('lobby'), 1800)
+      lobbyTimerRef.current = setTimeout(() => onNavigate('lobby'), 1800)
     } catch {
       // Server offline — show mock code for UI demo
       setRoomCode(generateCode())
