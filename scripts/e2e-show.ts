@@ -11,6 +11,7 @@
  *   npm run show -- --bot-duration 60      → run bot for 60 seconds
  *   npm run show -- --url http://localhost:3000
  *   npm run show -- --errors-only          → suppress non-error console output
+ *   npm run show -- --debug                → verbose: all WS messages + screen-change events
  *
  * Prerequisite: npm run dev must be running (client + server).
  */
@@ -28,14 +29,79 @@ const SIZE         = arg('--size',         'small') as 'small' | 'medium' | 'lar
 const BOT_DURATION = parseInt(arg('--bot-duration', '30'))
 const HEADLESS     = args.includes('--headless')
 const ERRORS_ONLY  = args.includes('--errors-only')
+const DEBUG        = args.includes('--debug')
 
 // ── ANSI ──────────────────────────────────────────────────────────────────────
 const C = { reset: '\x1b[0m', bold: '\x1b[1m', green: '\x1b[32m', red: '\x1b[31m',
-            yellow: '\x1b[33m', cyan: '\x1b[36m', gray: '\x1b[90m', white: '\x1b[97m' }
+            yellow: '\x1b[33m', cyan: '\x1b[36m', gray: '\x1b[90m', white: '\x1b[97m',
+            magenta: '\x1b[35m', blue: '\x1b[34m' }
 const log  = (m: string) => console.log(`  ${C.cyan}·${C.reset} ${m}`)
 const ok   = (m: string) => console.log(`  ${C.green}✓${C.reset} ${m}`)
 const err  = (m: string) => console.log(`  ${C.red}✗${C.reset} ${C.bold}${m}${C.reset}`)
 const info = (m: string) => console.log(`${C.yellow}▸${C.reset} ${m}`)
+const dbg  = (m: string) => { if (DEBUG) console.log(`  ${C.magenta}[DBG]${C.reset} ${m}`) }
+
+// ── Browser-side debug injection (WebSocket spy + screen observer) ────────────
+const DEBUG_INIT_SCRIPT = `
+(function () {
+  if (window.__beniDebugInstalled) return
+  window.__beniDebugInstalled = true
+
+  // ── WebSocket spy: log every message in/out ──────────────────────────────
+  const OrigWS = window.WebSocket
+  window.WebSocket = function (url, proto) {
+    const ws = new OrigWS(url, proto)
+    const label = url.toString().split('/').pop() || url
+    ws.addEventListener('message', ev => {
+      try {
+        // Colyseus messages are binary (msgpack); log raw byte count
+        if (ev.data instanceof ArrayBuffer) {
+          console.debug('[WS←] binary ' + ev.data.byteLength + 'B  — ' + label)
+        } else {
+          const txt = ev.data.slice(0, 200)
+          console.debug('[WS←] ' + txt + '  — ' + label)
+        }
+      } catch {}
+    })
+    const origSend = ws.send.bind(ws)
+    ws.send = function (data) {
+      try {
+        if (data instanceof ArrayBuffer) {
+          console.debug('[WS→] binary ' + data.byteLength + 'B')
+        } else {
+          console.debug('[WS→] ' + String(data).slice(0, 200))
+        }
+      } catch {}
+      return origSend(data)
+    }
+    return ws
+  }
+  Object.assign(window.WebSocket, OrigWS)
+
+  // ── Screen observer: watch for known React screen elements ───────────────
+  const SCREENS = [
+    { name: 'MainMenu',    sel: '[class*="menuItem"]' },
+    { name: 'NewGame',     sel: '[class*="formGrid"]' },
+    { name: 'Lobby',       sel: '[class*="lobbyLayout"]' },
+    { name: 'Briefing',    sel: '[class*="briefingBtn"]' },
+    { name: 'GameWorld',   sel: 'canvas' },
+    { name: 'GameEndCard', sel: '[class*="endCard"]' },
+  ]
+  let lastScreen = ''
+  const obs = new MutationObserver(() => {
+    for (const { name, sel } of SCREENS) {
+      if (document.querySelector(sel)) {
+        if (lastScreen !== name) {
+          lastScreen = name
+          console.debug('[SCREEN] → ' + name + '  @' + performance.now().toFixed(0) + 'ms')
+        }
+        return
+      }
+    }
+  })
+  obs.observe(document.body, { childList: true, subtree: true })
+})()
+`
 
 // ── Bot movement ──────────────────────────────────────────────────────────────
 const BOT_PATTERNS: { keys: string[]; ms: number }[] = [
@@ -83,7 +149,7 @@ async function main() {
   console.log(`\n${C.bold}${C.white}╔══════════════════════════════════════╗`)
   console.log(`║   benilike  E2E  show  runner         ║`)
   console.log(`╚══════════════════════════════════════╝${C.reset}`)
-  console.log(`  url=${C.cyan}${URL}${C.reset}  size=${C.cyan}${SIZE}${C.reset}  headless=${C.cyan}${HEADLESS}${C.reset}  bot=${C.cyan}${BOT_DURATION}s${C.reset}\n`)
+  console.log(`  url=${C.cyan}${URL}${C.reset}  size=${C.cyan}${SIZE}${C.reset}  headless=${C.cyan}${HEADLESS}${C.reset}  bot=${C.cyan}${BOT_DURATION}s${C.reset}  debug=${C.cyan}${DEBUG}${C.reset}\n`)
 
   // ── Launch browser ──────────────────────────────────────────────────────────
   info('Launching browser…')
@@ -103,19 +169,28 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   const page    = await context.newPage()
 
+  // ── Inject debug spy before any page scripts run ────────────────────────────
+  if (DEBUG) {
+    await context.addInitScript(DEBUG_INIT_SCRIPT)
+    dbg('Browser-side WS spy + screen observer injected')
+  }
+
   // ── Console / error forwarding ──────────────────────────────────────────────
   const consoleErrors: string[] = []
   page.on('console', msg => {
+    const text = msg.text().replace(/%c[^%]*/g, '').trim()
+    if (!text) return
     if (msg.type() === 'error') {
       // Ignore 404s for known dev assets (favicon, hot-reload pings, etc.)
-      const text = msg.text()
       if (/favicon|\.hot-update\.|sockjs|404 \(Not Found\)/.test(text)) return
       consoleErrors.push(text)
       err(`[console.error] ${text}`)
+    } else if (msg.type() === 'debug') {
+      // debug messages only shown with --debug
+      dbg(text.slice(0, 180))
     } else if (!ERRORS_ONLY) {
       const pre = msg.type() === 'warning' ? `${C.yellow}warn${C.reset}` : `${C.gray}log ${C.reset}`
-      const text = msg.text().replace(/%c[^%]*/g, '').trim()
-      if (text) console.log(`  [${pre}] ${text.slice(0, 120)}`)
+      console.log(`  [${pre}] ${text.slice(0, 120)}`)
     }
   })
   page.on('pageerror', e => {
@@ -137,6 +212,7 @@ async function main() {
 
   // ── Main Menu: press N to go to New Game ────────────────────────────────────
   info('Opening New Game screen…')
+  dbg('pressing N key on main menu')
   await page.waitForTimeout(400)          // let boot animation settle
   await page.keyboard.press('n')
   ok('Navigated to New Game')
@@ -167,30 +243,36 @@ async function main() {
 
   // ── New Game: click [ CREATE ROOM ] ────────────────────────────────────────
   info('Creating room…')
+  dbg('clicking [ CREATE ROOM ]')
   await clickBtn(page, /CREATE ROOM/)
   ok('Room created — waiting for code…')
 
   // ── New Game: click [ OPEN LOBBY ] once code appears ───────────────────────
+  dbg('waiting for [ OPEN LOBBY ]')
   await clickBtn(page, /OPEN LOBBY/, 10_000)
   ok('Lobby opened')
 
   // ── Lobby: click [ START GAME ] ────────────────────────────────────────────
   info('Starting game…')
   await page.waitForTimeout(500)
+  dbg('clicking [ START GAME ]')
   await clickBtn(page, /START GAME/, 8000)
   ok('Game started')
 
   // ── Briefing: click LET'S GO button ────────────────────────────────────────
   info('Waiting for briefing…')
   try {
+    dbg('waiting for LET\'S GO')
     await clickBtn(page, /LET'S GO|LETS GO/, 15_000)
     ok('Briefing dismissed')
   } catch {
     log('Briefing not found or already passed')
   }
+  dbg('post-briefing settle')
   await page.waitForTimeout(1500)
 
   // ── In game world ───────────────────────────────────────────────────────────
+  dbg('entering game world — taking screenshot')
   ok('In game world!')
   const screenshotPath = `/tmp/benilike-e2e-${Date.now()}.png`
   await page.screenshot({ path: screenshotPath }).catch(() => {})
