@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useGameRoom } from '../../store/useGameRoom'
-import { ROLE_LABELS } from '@shared/types'
+import { ROLE_LABELS, ABILITY_NAMES, ABILITY_DESCS, ABILITY_COOLDOWNS_MS } from '@shared/types'
 import GameWorld from '../../game/GameWorld'
 import type { Screen } from '../../App'
 import styles from './screens.module.css'
@@ -23,9 +23,11 @@ const ROLE_OBJECTIVES: Record<string, string[]> = {
 }
 
 export default function GameScreen({ onNavigate }: Props) {
-  const { room, myRole, myFaction, players, terminalProgress, gameEnd, clearRoom } = useGameRoom()
+  const { room, myRole, myFaction, players, terminalProgress, gameEnd, activeEffects, myLastAbilityTime, clearRoom } = useGameRoom()
   const [nearTerminal, setNearTerminal] = useState(false)
   const [interacting,  setInteracting]  = useState(false)
+  const [cdPct, setCdPct] = useState(0)  // 0=ready, 1=just used
+  const cdRaf = useRef<number>(0)
 
   const handleLeave = () => {
     room?.send('task_stop', {})
@@ -37,11 +39,36 @@ export default function GameScreen({ onNavigate }: Props) {
   const handleNear     = useCallback((v: boolean) => setNearTerminal(v), [])
   const handleInteract = useCallback((v: boolean) => setInteracting(v), [])
 
+  // Live cooldown animation
+  useEffect(() => {
+    const cd = myRole ? (ABILITY_COOLDOWNS_MS[myRole] ?? 60_000) : 60_000
+    const tick = () => {
+      const elapsed = Date.now() - myLastAbilityTime
+      setCdPct(Math.max(0, 1 - elapsed / cd))
+      cdRaf.current = requestAnimationFrame(tick)
+    }
+    cdRaf.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(cdRaf.current)
+  }, [myRole, myLastAbilityTime])
+
   const pct         = Math.round(terminalProgress)
   const isWorkforce = myFaction === 'workforce'
   const barColor    = isWorkforce ? 'var(--color-terminal)' : 'var(--brand-orange)'
   const taskLabel   = isWorkforce ? 'REPAIR TERMINAL' : 'HACK TERMINAL'
   const objectives  = myRole ? (ROLE_OBJECTIVES[myRole] ?? []) : []
+  const abilityName = myRole ? ABILITY_NAMES[myRole] : '—'
+  const abilityDesc = myRole ? ABILITY_DESCS[myRole] : ''
+  const abilityReady = cdPct <= 0
+  const insiderUsed  = myRole === 'insider' && myLastAbilityTime > 0
+
+  // Active effect banners
+  const effectBanners: { label: string; color: string }[] = []
+  if (activeEffects.hotfixActive && isWorkforce)    effectBanners.push({ label: '⚡ HOTFIX ACTIVE — 2× speed', color: '#4ADE80' })
+  if (activeEffects.speedBoostActive && isWorkforce) effectBanners.push({ label: '🏃 SPRINT ACTIVE — +30% speed', color: '#a78bfa' })
+  if (activeEffects.frozenActive && !isWorkforce)    effectBanners.push({ label: '❄ COOLDOWNS FROZEN', color: '#38bdf8' })
+  if (activeEffects.marketingActive && !isWorkforce) effectBanners.push({ label: '📢 PR BLITZ — HACK RATE ½', color: '#f59e0b' })
+  if (activeEffects.lockdownActive && !isWorkforce)  effectBanners.push({ label: '🔒 SERVER ROOM LOCKED', color: '#ef4444' })
+  if (activeEffects.trapPlanted && isWorkforce)      effectBanners.push({ label: '⚠ TRAP AT TERMINAL', color: '#fb923c' })
 
   if (gameEnd) {
     const iWon = gameEnd.winner === myFaction
@@ -99,6 +126,30 @@ export default function GameScreen({ onNavigate }: Props) {
           <div className={styles.playerCount}>{players.length}</div>
           <div className={styles.roomCodeHint}>{myFaction?.toUpperCase() ?? ''}</div>
         </div>
+
+        {/* Ability slot — bottom-right */}
+        <div className={styles.hudCornerBR}>
+          <span className={styles.fieldLabel}>ABILITY  [Q]</span>
+          <div className={abilityReady && !insiderUsed ? styles.abilityReady : styles.abilityCooldown}>
+            {insiderUsed ? 'USED' : abilityName}
+          </div>
+          <div className={styles.roomCodeHint}>{abilityDesc}</div>
+          {!abilityReady && !insiderUsed && (
+            <div className={styles.abilityBar}>
+              <div className={styles.abilityBarFill} style={{ width: `${cdPct * 100}%` }} />
+            </div>
+          )}
+        </div>
+        {/* Active effect banners */}
+        {effectBanners.length > 0 && (
+          <div className={styles.hudEffectBanners}>
+            {effectBanners.map((b, i) => (
+              <div key={i} className={styles.hudEffectBanner} style={{ borderColor: b.color, color: b.color }}>
+                {b.label}
+              </div>
+            ))}
+          </div>
+        )}
         <div className={styles.hudTaskBar}>
           <div className={styles.hudTaskLabel}>{taskLabel}</div>
           <div className={styles.hudProgressTrack}>

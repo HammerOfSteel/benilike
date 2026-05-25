@@ -11,6 +11,7 @@ export class Player extends Schema {
   @type('float32') facing: number     = 0
   @type('boolean') connected: boolean = true
   @type('boolean') isBot: boolean     = false
+  @type('boolean') disguised: boolean = false  // Social Engineer / Insider passive
 }
 
 export class GameState extends Schema {
@@ -21,4 +22,6 @@ export class GameState extends Schema {
   @type('string')        mapSize    = 'medium'
   @type('string')        winner     = ''          // 'workforce' | 'opposition' | ''
   @type('float32')       terminalProgress = 50    // 0 = opp wins, 100 = workforce wins
+  @type('boolean')       trapPlanted:    boolean = false
+  @type('boolean')       lockdownActive: boolean = false
 }

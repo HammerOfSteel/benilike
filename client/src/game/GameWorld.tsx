@@ -213,9 +213,10 @@ function OfficeDungeon({ progress }: { progress: number }) {
 interface PlayerProps {
   x: number; z: number; facing: number
   faction: string; isLocal: boolean
+  disguised?: boolean
 }
 
-function PlayerMesh({ x, z, facing, faction, isLocal }: PlayerProps) {
+function PlayerMesh({ x, z, facing, faction, isLocal, disguised }: PlayerProps) {
   const meshRef = useRef<THREE.Group>(null)
 
   useFrame(() => {
@@ -225,9 +226,11 @@ function PlayerMesh({ x, z, facing, faction, isLocal }: PlayerProps) {
     }
   })
 
+  // Disguised players appear as workforce colour to everyone else
+  const effectiveFaction = (!isLocal && disguised) ? 'workforce' : faction
   const color = isLocal
     ? '#6D28D9'
-    : faction === 'opposition' ? '#ef4444' : '#3b82f6'
+    : effectiveFaction === 'opposition' ? '#ef4444' : '#3b82f6'
 
   return (
     <group ref={meshRef}>
@@ -280,6 +283,7 @@ function LocalPlayerController({ faction, onNearTerminal, onInteracting }: Contr
   const facingRef    = useRef(0)
   const lastSent     = useRef(0)
   const isInteract   = useRef(false)
+  const qWasDown     = useRef(false)
   const groupRef     = useRef<THREE.Group>(null)
 
   // Reset position each time this component mounts (new game session)
@@ -300,8 +304,10 @@ function LocalPlayerController({ faction, onNearTerminal, onInteracting }: Contr
     if (dx !== 0 || dz !== 0) {
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
-      localPos.x = Math.max(-ROOM_HALF, Math.min(ROOM_HALF, localPos.x + dx * SPEED * delta))
-      localPos.z = Math.max(-ROOM_HALF_Z_N, Math.min(ROOM_HALF_Z_S, localPos.z + dz * SPEED * delta))
+      const gs = useGameRoom.getState()
+      const speedMult = (faction === 'workforce' && gs.activeEffects.speedBoostActive) ? 1.3 : 1.0
+      localPos.x = Math.max(-ROOM_HALF, Math.min(ROOM_HALF, localPos.x + dx * SPEED * speedMult * delta))
+      localPos.z = Math.max(-ROOM_HALF_Z_N, Math.min(ROOM_HALF_Z_S, localPos.z + dz * SPEED * speedMult * delta))
       facingRef.current = Math.atan2(dx, dz)
     }
 
@@ -324,6 +330,14 @@ function LocalPlayerController({ faction, onNearTerminal, onInteracting }: Contr
       onInteracting(wantsInteract)
       useGameRoom.getState().room?.send(wantsInteract ? 'task_start' : 'task_stop', {})
     }
+
+    // Q key ability (edge-triggered — fires once per press)
+    if (k['KeyQ'] && !qWasDown.current) {
+      qWasDown.current = true
+      useGameRoom.getState().room?.send('use_ability', {})
+      useGameRoom.getState().setMyLastAbilityTime(Date.now())
+    }
+    if (!k['KeyQ']) qWasDown.current = false
 
     // Throttled position send
     const now = performance.now()
@@ -361,7 +375,7 @@ interface SceneProps {
 }
 
 function Scene({ onNearTerminal, onInteracting, gameOver }: SceneProps) {
-  const { players, myFaction, room, terminalProgress } = useGameRoom()
+  const { players, myFaction, room, terminalProgress, pingMarkers, activeEffects } = useGameRoom()
 
   // Sync server state → store while in game
   useEffect(() => {
@@ -379,16 +393,42 @@ function Scene({ onNearTerminal, onInteracting, gameOver }: SceneProps) {
           role:      p.role ?? '',
           connected: p.connected,
           isBot:     p.isBot ?? false,
+          disguised: p.disguised ?? false,
         }))
       )
       gs.setTerminalProgress(state.terminalProgress ?? 50)
+      // Sync schema-tracked effect flags
+      const curr = gs.activeEffects
+      if (state.trapPlanted !== curr.trapPlanted || state.lockdownActive !== curr.lockdownActive) {
+        gs.setActiveEffects({ ...curr, trapPlanted: !!state.trapPlanted, lockdownActive: !!state.lockdownActive })
+      }
     })
 
     room.onMessage('game_end', (data: { winner: string; reason: string }) => {
       useGameRoom.getState().setGameEnd(data.winner, data.reason)
     })
 
-    return () => { if (typeof unsub === 'function') unsub() }
+    room.onMessage('effect_update', (data: any) => {
+      useGameRoom.getState().setActiveEffects(data)
+    })
+
+    room.onMessage('hr_ping', (data: { positions: {sessionId: string; x: number; z: number}[]; duration: number }) => {
+      const gs = useGameRoom.getState()
+      gs.addPings(data.positions.map(p => ({ x: p.x, z: p.z, expiresAt: Date.now() + data.duration, pingType: 'hr' as const })))
+    })
+
+    room.onMessage('spy_sweep', (data: { positions: {sessionId: string; x: number; z: number}[]; duration: number }) => {
+      const gs = useGameRoom.getState()
+      gs.addPings(data.positions.map(p => ({ x: p.x, z: p.z, expiresAt: Date.now() + data.duration, pingType: 'spy' as const })))
+    })
+
+    // Purge expired pings every 2s
+    const pingInterval = setInterval(() => useGameRoom.getState().clearExpiredPings(), 2_000)
+
+    return () => {
+      if (typeof unsub === 'function') unsub()
+      clearInterval(pingInterval)
+    }
   }, [room])
 
   const mySessionId = room?.sessionId
@@ -412,9 +452,34 @@ function Scene({ onNearTerminal, onInteracting, gameOver }: SceneProps) {
             x={p.x} z={p.z} facing={p.facing}
             faction={p.faction}
             isLocal={false}
+            disguised={p.disguised}
           />
         ))
       }
+
+      {/* Ping markers (HR / Spy position reveals) */}
+      {pingMarkers
+        .filter(pm => pm.expiresAt > Date.now())
+        .map(pm => (
+          <mesh key={pm.id} position={[pm.x, 0.05, pm.z]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.35, 0.55, 24]} />
+            <meshStandardMaterial
+              color={pm.pingType === 'hr' ? '#f59e0b' : '#38bdf8'}
+              emissive={pm.pingType === 'hr' ? '#f59e0b' : '#38bdf8'}
+              emissiveIntensity={1.5}
+              transparent opacity={0.85}
+            />
+          </mesh>
+        ))
+      }
+
+      {/* Lockdown barrier glow at server room entrance */}
+      {activeEffects.lockdownActive && (
+        <mesh position={[0, 1.5, -7.1]}>
+          <boxGeometry args={[4, 3, 0.1]} />
+          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.6} transparent opacity={0.35} />
+        </mesh>
+      )}
 
       {/* Local player */}
       {!gameOver && (
