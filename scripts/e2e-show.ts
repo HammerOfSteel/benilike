@@ -158,6 +158,13 @@ async function main() {
     ok(`Map size: ${sizeLabel}`)
   }
 
+  // ── New Game: set bots to 0 so the game doesn't auto-end during the demo ───
+  const minusBtn = page.locator('button').filter({ hasText: /^−$/ }).first()
+  if (await minusBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+    for (let i = 0; i < 3; i++) { await minusBtn.click(); await page.waitForTimeout(80) }
+    ok('Bot count set to 0')
+  }
+
   // ── New Game: click [ CREATE ROOM ] ────────────────────────────────────────
   info('Creating room…')
   await clickBtn(page, /CREATE ROOM/)
