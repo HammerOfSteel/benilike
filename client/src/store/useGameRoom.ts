@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Room } from 'colyseus.js'
-import type { PlayerRole, Faction, EffectUpdate } from '@shared/types'
+import type { PlayerRole, Faction, EffectUpdate, StationInfo, TaskId } from '@shared/types'
 
 export interface LobbyPlayer {
   sessionId: string
@@ -13,25 +13,27 @@ export interface LobbyPlayer {
   connected: boolean
   isBot:     boolean
   disguised: boolean
+  slowed:    boolean
 }
 
-export interface PingMarker {
-  id:        string
-  x:         number
-  z:         number
-  expiresAt: number
-  pingType:  'hr' | 'spy'
+export interface TaskToast {
+  id:         string
+  role:       string
+  effectDesc: string
+  meterGain:  number
+  expiresAt:  number
 }
 
 export type ActiveEffects = EffectUpdate
 
 const DEFAULT_EFFECTS: ActiveEffects = {
-  hotfixActive:    false,
-  speedBoostActive: false,
-  frozenActive:    false,
-  marketingActive: false,
-  lockdownActive:  false,
-  trapPlanted:     false,
+  workforceSpeedActive:  false,
+  lockdownActive:        false,
+  workforceHoldSlow:     false,
+  oppositionHoldSlow:    false,
+  hackerCorruption:      false,
+  ciPipelineActive:      false,
+  badgeRenewalRequired:  false,
 }
 
 interface GameRoomStore {
@@ -40,22 +42,31 @@ interface GameRoomStore {
   myFaction:        Faction | null
   players:          LobbyPlayer[]
   incidents:        { text: string; type: 'info' | 'warn' | 'danger' | 'success'; time: string }[]
-  terminalProgress: number
+  workforceMeter:   number
+  oppositionMeter:  number
   gameEnd:          { winner: string; reason: string } | null
   activeEffects:    ActiveEffects
-  pingMarkers:      PingMarker[]
-  myLastAbilityTime: number
-  setRoom:      (room: Room) => void
-  setRole:      (role: PlayerRole, faction: Faction) => void
-  setPlayers:   (players: LobbyPlayer[]) => void
-  addIncident:  (text: string, type?: GameRoomStore['incidents'][0]['type'], time?: string) => void
-  setTerminalProgress: (v: number) => void
-  setGameEnd:   (winner: string, reason: string) => void
-  setActiveEffects: (e: ActiveEffects) => void
-  addPings:     (pings: Omit<PingMarker, 'id'>[]) => void
-  clearExpiredPings: () => void
-  setMyLastAbilityTime: (t: number) => void
-  clearRoom:    () => void
+  stations:         StationInfo[]
+  completedTasks:   Set<TaskId>
+  holdingStationId: string | null
+  holdStartedAt:    number
+  toasts:           TaskToast[]
+  monitorSnapshot:  { rackA: number; rackB: number; rackC: number } | null
+
+  setRoom:            (room: Room) => void
+  setRole:            (role: PlayerRole, faction: Faction) => void
+  setPlayers:         (players: LobbyPlayer[]) => void
+  addIncident:        (text: string, type?: GameRoomStore['incidents'][0]['type'], time?: string) => void
+  setMeters:          (workforce: number, opposition: number) => void
+  setGameEnd:         (winner: string, reason: string) => void
+  setActiveEffects:   (e: ActiveEffects) => void
+  setStations:        (stations: StationInfo[]) => void
+  completeTask:       (taskId: TaskId) => void
+  setHolding:         (stationId: string | null) => void
+  addToast:           (toast: Omit<TaskToast, 'id'>) => void
+  clearExpiredToasts: () => void
+  setMonitorSnapshot: (s: { rackA: number; rackB: number; rackC: number } | null) => void
+  clearRoom:          () => void
 }
 
 export const useGameRoom = create<GameRoomStore>((set) => ({
@@ -64,38 +75,41 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   myFaction:        null,
   players:          [],
   incidents:        [],
-  terminalProgress: 50,
+  workforceMeter:   0,
+  oppositionMeter:  0,
   gameEnd:          null,
   activeEffects:    { ...DEFAULT_EFFECTS },
-  pingMarkers:      [],
-  myLastAbilityTime: 0,
+  stations:         [],
+  completedTasks:   new Set(),
+  holdingStationId: null,
+  holdStartedAt:    0,
+  toasts:           [],
+  monitorSnapshot:  null,
 
-  setRoom:    (room) => set({ room }),
-  setRole:    (role, faction) => set({ myRole: role, myFaction: faction }),
-  setPlayers: (players) => set({ players }),
-  setTerminalProgress: (terminalProgress) => set({ terminalProgress }),
-  setGameEnd:   (winner, reason) => set({ gameEnd: { winner, reason } }),
-  setActiveEffects: (activeEffects) => set({ activeEffects }),
-  addPings: (pings) => set(s => ({
-    pingMarkers: [
-      ...s.pingMarkers,
-      ...pings.map((p, i) => ({ ...p, id: `${Date.now()}-${i}` })),
-    ],
-  })),
-  clearExpiredPings: () => set(s => ({
-    pingMarkers: s.pingMarkers.filter(p => p.expiresAt > Date.now()),
-  })),
-  setMyLastAbilityTime: (myLastAbilityTime) => set({ myLastAbilityTime }),
-  addIncident: (text, type = 'info', time) => set(s => ({
-    incidents: [...s.incidents.slice(-40), {
-      text,
-      type,
+  setRoom:          (room) => set({ room }),
+  setRole:          (myRole, myFaction) => set({ myRole, myFaction }),
+  setPlayers:       (players) => set({ players }),
+  addIncident:      (text, type = 'info', time) => set(s => ({
+    incidents: [...s.incidents.slice(-49), {
+      text, type,
       time: time ?? new Date().toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
     }],
   })),
-  clearRoom: () => set({
+  setMeters:        (workforceMeter, oppositionMeter) => set({ workforceMeter, oppositionMeter }),
+  setGameEnd:       (winner, reason) => set({ gameEnd: { winner, reason } }),
+  setActiveEffects: (activeEffects) => set({ activeEffects }),
+  setStations:      (stations) => set({ stations }),
+  completeTask:     (taskId) => set(s => ({ completedTasks: new Set([...s.completedTasks, taskId]) })),
+  setHolding:       (holdingStationId) => set({ holdingStationId, holdStartedAt: holdingStationId ? Date.now() : 0 }),
+  addToast:         (toast) => set(s => ({
+    toasts: [...s.toasts, { ...toast, id: Math.random().toString(36).slice(2) }],
+  })),
+  clearExpiredToasts: () => set(s => ({ toasts: s.toasts.filter(t => t.expiresAt > Date.now()) })),
+  setMonitorSnapshot: (monitorSnapshot) => set({ monitorSnapshot }),
+  clearRoom:          () => set({
     room: null, myRole: null, myFaction: null, players: [], incidents: [],
-    gameEnd: null, terminalProgress: 50,
-    activeEffects: { ...DEFAULT_EFFECTS }, pingMarkers: [], myLastAbilityTime: 0,
+    workforceMeter: 0, oppositionMeter: 0, gameEnd: null,
+    activeEffects: { ...DEFAULT_EFFECTS }, stations: [], completedTasks: new Set(),
+    holdingStationId: null, holdStartedAt: 0, toasts: [], monitorSnapshot: null,
   }),
 }))
