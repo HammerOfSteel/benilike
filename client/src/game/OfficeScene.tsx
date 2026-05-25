@@ -10,7 +10,7 @@ function OfficeTile({ position, delay }: { position: [number, number, number]; d
     if (!meshRef.current) return
     const t = clock.elapsedTime + delay
     meshRef.current.position.y = position[1] + Math.sin(t * 0.4) * 0.08
-    meshRef.current.material.opacity = 0.18 + Math.sin(t * 0.3) * 0.06
+    ;(meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0.18 + Math.sin(t * 0.3) * 0.06
   })
 
   return (
