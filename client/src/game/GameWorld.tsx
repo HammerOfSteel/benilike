@@ -1133,7 +1133,20 @@ function Scene({
       gs.addToast({ playerName: data.playerName, taskId: data.taskId, expiresAt: Date.now() + 4000 })
       gs.addIncident(`${data.playerName} completed ${String(data.taskId).replace(/_/g, ' ')}`, 'info')
     })
-    room.onMessage('sprint_update', (data: { info: any }) => useGameRoom.getState().setSprint(data.info))
+    room.onMessage('sprint_update', (data: { info: any }) => {
+      const gs = useGameRoom.getState()
+      // When a new sprint begins, clear the client-side completed-task Set so
+      // tasks show as undone again in the HUD and workstation rings
+      if ((data.info.sprint ?? 1) > (gs.sprint?.sprint ?? 0)) {
+        gs.clearCompletedTasks()
+      }
+      gs.setSprint(data.info)
+    })
+    // Receive rogue-AI phase updates during gameplay (LobbyScreen removes its
+    // listener on unmount, so we need a handler here too)
+    room.onMessage('ai_briefing', (d: { phase: number; phaseTasks: TaskId[] }) =>
+      useGameRoom.getState().setAiBriefing(d.phase, d.phaseTasks)
+    )
     room.onMessage('body_appeared', (data: { body: BodyInfo }) => useGameRoom.getState().addBody(data.body))
     room.onMessage('body_removed',  (data: { bodyId: string }) => useGameRoom.getState().removeBody(data.bodyId))
     room.onMessage('game_end',      (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))

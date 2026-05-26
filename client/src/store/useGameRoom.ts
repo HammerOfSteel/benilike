@@ -67,6 +67,7 @@ interface GameRoomStore {
   setGameEnd:         (winner: string, reason: string) => void
   setStations:        (stations: StationInfo[]) => void
   completeTask:       (taskId: TaskId) => void
+  clearCompletedTasks: () => void
   setHolding:         (stationId: string | null) => void
   addToast:           (toast: Omit<TaskToast, 'id'>) => void
   clearExpiredToasts: () => void
@@ -109,9 +110,11 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   setRoom:          (room) => set({ room }),
   setRole:          (myRole, myAssignedTasks) => set({ myRole, myAssignedTasks }),
   setAiBriefing:    (aiPhase, aiPhaseTasks) => set(s => ({
-    myIsAi:      true,
+    myIsAi:         true,
     aiPhase,
-    aiPhaseTasks: [...s.aiPhaseTasks, ...aiPhaseTasks],
+    aiPhaseTasks:   [...s.aiPhaseTasks, ...aiPhaseTasks],
+    // Merge into myAssignedTasks so HUD, minimap, and workstation rings show AI tasks
+    myAssignedTasks: [...new Set([...s.myAssignedTasks, ...aiPhaseTasks])],
   })),
   setPlayers:       (players) => set({ players }),
   addIncident:      (text, type = 'info', time) => set(s => ({
@@ -123,6 +126,7 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   setGameEnd:       (winner, reason) => set({ gameEnd: { winner, reason } }),
   setStations:      (stations) => set({ stations }),
   completeTask:     (taskId) => set(s => ({ completedTasks: new Set([...s.completedTasks, taskId]) })),
+  clearCompletedTasks: () => set({ completedTasks: new Set() }),
   setHolding:       (holdingStationId) => set({ holdingStationId, holdStartedAt: holdingStationId ? Date.now() : 0 }),
   addToast:         (toast) => set(s => ({
     toasts: [...s.toasts, { ...toast, id: Math.random().toString(36).slice(2) }],
