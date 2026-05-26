@@ -358,7 +358,7 @@ async function main() {
     // ─── SPECTATE PATH ──────────────────────────────────────────────────────
     // LobbyScreen detects isSpectator → navigates to 'spectator' (canvas).
     info('Waiting for spectator view…')
-    await page.locator('canvas').waitFor({ state: 'visible', timeout: 15_000 })
+    await page.locator('canvas[data-engine]').waitFor({ state: 'visible', timeout: 15_000 })
     ok('Spectator screen active!')
 
     // Give the 3D world a moment to fully load, then try to follow the first bot
@@ -390,7 +390,7 @@ async function main() {
       warn('Briefing not detected — it may have auto-dismissed, continuing…')
     }
 
-    await page.locator('canvas').waitFor({ state: 'visible', timeout: 12_000 })
+    await page.locator('canvas[data-engine]').waitFor({ state: 'visible', timeout: 12_000 })
     await page.waitForTimeout(600)
     ok('In game world!')
 
