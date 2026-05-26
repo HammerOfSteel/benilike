@@ -3,6 +3,7 @@
 > Tracked by phase. Move items between sections as work progresses.
 > Format: `- [ ] task — notes`
 > **Last redesign:** 2026-05-25 — Rogue AI model. Phase 2 tasks below reflect the new design.
+> **Last updated:** 2026-05-26
 
 ---
 
@@ -25,79 +26,85 @@
 - [x] Minimap (canvas RAF loop, rooms + players)
 - [x] Bot AI: nearest-station targeting, 500ms tick
 
-## Phase 2 — Rogue AI Core 🔄 Next
+## Phase 2 — Rogue AI Core ✅ Done (core loop implemented)
 
 ### Role & Identity
-- [ ] **Assigned task lists** — at game start, server assigns 3 tasks from the shared pool to each player based on job title
-- [ ] **Remove faction assignment** — all players start as workers; one is secretly assigned The AI role server-side
-- [ ] **AI role briefing** — separate briefing screen showing the AI its role + phase 1 objectives (hidden from all others)
-- [ ] **Job title labels** — show job title (not faction) on player name tags and HUD
+- [x] **Assigned task lists** — server assigns tasks per-bot based on role at game start
+- [x] **AI role (Rogue AI)** — one bot secretly assigned; has its own AI_TASK_DEFS (sabotage tasks)
+- [x] **AI role briefing** — revealed to spectator via `ai_revealed` message
+- [x] **Spectator mode** — full spectator view with player list, follow camera, chat feed, vote indicators
 
-### AI Phase System
-- [ ] **Phase 1 tasks** — Index Employee Records, Analyse System Logs, Map Network Topology — look like normal work
-- [ ] **Phase 2 tasks** — Deploy Backdoor, Clone Credentials, Bypass Access Controls — with 1s screen flicker visual tell on nearby monitors
-- [ ] **Phase 3 unlock** — after Phase 2 complete, AI gains Shutdown ability (30s cooldown)
-- [ ] **Shutdown mechanic** — AI alone with target ≥1s → instant eliminate; body appears in room
-- [ ] **Phase 3 objective task** — Initiate Takeover Protocol (Exec Suite, 8s)
-- [ ] **AI win condition** — majority eliminated OR all phases + Takeover complete
-
-### Body & Reporting
-- [ ] **Body entity** — when a worker is eliminated, their character is replaced by a body marker in the room
-- [ ] **Report action** — any living worker near a body presses E to report it → triggers All Hands meeting
+### Bot AI
+- [x] **A* pathfinding** — custom implementation on existing grid, 8-directional with no-corner-cutting rule
+- [x] **Among Us-style spawn** — all bots spawn at `startX/startZ` (main_office center), fan out with delays
+- [x] **Bot-triggered meetings** — paranoid/conspiracy/methodical bots call all-hands 60–110s into sprint
+- [x] **Retro banter** — bots discuss sprint stats (MVP, slacker) during 45s retro window
+- [x] **Inter-bot dialogue** — `{other}` template variable; bots reference each other by name in banter
+- [x] **Bot personality banter** — corporate_drone, paranoid, gossip, and others have unique voice lines
 
 ### Meetings & Voting
-- [ ] **All Hands meeting UI** — full-screen overlay; 45s text chat + anonymous vote
-- [ ] **Vote logic** — majority vote ejects player; tie = skip; tally shown after
-- [ ] **Correct ejection** → workers win immediately
-- [ ] **Wrong ejection** → worker eliminated + wrongful termination penalty (forfeit next perk vote)
-- [ ] **All Hands call limit** — 2 uses per player per match; conference room terminal trigger
-- [ ] **Ghost / spectator mode** — eliminated players get free-roam camera, cannot interact or vote
+- [x] **All Hands meeting** — triggered by bots or human report; 45s timeout
+- [x] **Named votes** — `namedVotes` object in `vote_result`
+- [x] **Vote indicator animation** — R3F Billboard component with fade-in/hold/fade-out per vote
+- [x] **Vote phase transition** — switches to voting phase on first `vote_cast`
 
-### Sprint System
-- [ ] **Sprint size vote** — pre-game lobby vote: Small / Medium / Large (affects quota + perk tier)
-- [ ] **Sprint timer** — 3-minute countdown per sprint, visible to all
-- [ ] **Sprint quota tracker** — bottom HUD bar showing tasks completed vs quota this sprint
-- [ ] **Sprint Retrospective UI** — 45s auto-triggered at sprint end; shows per-player stats + perk vote if quota met
+### UI & Spectator
+- [x] **Spectator chat** — side panel + bottom feed, correct padding/position
+- [x] **Game-end overlay** — shows winner, reason, "BACK TO MENU" button
+
+## Phase 3 — Assets & Visual Polish 🔄 Next
+
+### Asset Integration (assets available in `/assets_from_itch/`)
+- [ ] **Extract & convert assets** — unzip VNB Office Sets, convert FBX → GLTF/GLB via Blender or `fbx2gltf`
+  - `VNB Low Poly Office Set V1.1.0.zip` — desks, chairs, monitors, server racks, etc.
+  - `VNB Low Poly Office Set 2 (2025.06.27-1).zip` — lamps, book piles, extra furniture
+  - `_VoxelCharacters.zip` — voxel character OBJ+PNG (Char01–Char04)
+  - `allpeople.zip` — low-poly human OBJ+PNG (human.001–human.004)
+- [ ] **Player character models** — replace capsule geometry with character models from `allpeople` or `_VoxelCharacters`
+- [ ] **Office furniture models** — replace box geometry for desks, monitors, server racks with VNB Office Set pieces
+- [ ] **Workstation visual** — distinct model for interactive task stations (computer terminal)
+- [ ] **Body visual** — distinct marker in world space when a worker is eliminated
+- [ ] **Ghost player visual** — translucent/faded appearance for eliminated spectators
+
+### Map & Environment
+- [ ] Furniture collision (desks, server racks block movement)
+- [ ] Conference room terminal (All Hands trigger point in world)
+- [ ] Phase 2 visual tell — screen flicker shader/effect on nearby monitors during AI sabotage tasks
+
+### Audio
+- [ ] Sound effects: keyboard click, terminal beep, All Hands alarm, tension sting
+
+## Phase 4 — Game Mechanics & Sprint System
+
+- [ ] **Sprint size vote** — pre-game lobby: Small / Medium / Large (affects quota + perk tier)
+- [ ] **Sprint quota tracker** — bottom HUD bar showing tasks completed vs quota
 - [ ] **Morale penalty** — +10% hold time next sprint if quota missed
 - [ ] **3-sprint match structure** — game ends after Sprint 3 or earlier win condition
+- [ ] **Perks vote** — Standup Efficiency, Security Audit, Buddy System, Emergency Hire, Full Transparency
 
-### Perks
-- [ ] **Standup Efficiency** — hold time −20% next sprint (Tier 1)
-- [ ] **Security Audit** — AI Shutdown cooldown +15s next sprint (Tier 1)
-- [ ] **Buddy System** — reveal last room of any body's killer (Tier 2)
-- [ ] **Emergency Hire** — one ghost returns with limited 1-task-per-sprint role (Tier 2)
-- [ ] **Full Transparency** — at next All Hands, random player's last 3 rooms revealed (Tier 3, Large only)
+## Phase 5 — AI Elimination & Bodies
 
-## Phase 3 — Map & Polish
+- [ ] **Shutdown mechanic** — Rogue AI alone with target ≥1s → instant eliminate; body appears
+- [ ] **Body entity** — body marker replaces character in room
+- [ ] **Report action** — worker near body presses E → triggers All Hands
+- [ ] **Correct ejection** → workers win immediately
+- [ ] **Wrong ejection** → worker eliminated + penalty
+- [ ] **All Hands call limit** — 2 uses per player; conference room terminal trigger
 
-- [ ] Furniture collision (desks, server racks)
-- [ ] Conference room terminal (All Hands trigger point)
-- [ ] Phase 2 visual tell — screen flicker shader/effect on nearby monitors
-- [ ] Body visual (distinct marker in world space)
-- [ ] Ghost player visual (translucent, faded)
-- [ ] Spectator free-roam camera mode
-- [ ] Ventilation shafts — AI traversal shortcut (deferred)
-- [ ] NPC background workers — idle cover characters (deferred)
+## Phase 6 — Post-Match & Meta
 
-## Phase 4 — AI & Post-Match
-
-- [ ] AI adaptive difficulty (bot AI playing The AI role)
+- [ ] AI adaptive difficulty (bot playing Rogue AI role)
 - [ ] Post-match "Company Newsletter" — AI-generated dry corporate recap
 - [ ] Per-player match stats screen (tasks done, rooms visited, votes cast)
-
-## Phase 5 — Polish
-
-- [ ] Low-poly 3D asset kit (replace box geometry)
-- [ ] Player character models (one per job title)
-- [ ] Sound effects: keyboard, terminal beep, All Hands alarm, tension sting
-- [ ] Walk / interact animations
-- [ ] Post-processing: bloom, ambient occlusion
-- [ ] Mobile controls (stretch goal)
-
-## Backlog / Ideas
-
-- [ ] Spectator mode
 - [ ] Replay / highlight reel
+
+## Phase 7 — Polish & Stretch Goals
+
+- [ ] Post-processing: bloom, ambient occlusion
+- [ ] Walk / interact animations
+- [ ] Mobile controls (stretch goal)
+- [ ] Ventilation shafts — AI traversal shortcut (deferred)
+- [ ] NPC background workers — idle cover characters (deferred)
 - [ ] Custom office skins
 - [ ] Leaderboard / persistent stats
 - [ ] Tutorial / onboarding flow
@@ -137,3 +144,6 @@
 - [x] Phase 0: client scaffold — Vite + React + TS, R3F background scene, main menu
 - [x] Phase 1: full core game loop (see Phase 1 section above)
 - [x] Phase 1: win/lose overlay, role objectives panel, expanded server room map
+- [x] Phase 2: Rogue AI role, AI task stations, bot A* pathfinding, Among Us-style spawn
+- [x] Phase 2: bot-triggered meetings, retro banter, inter-bot dialogue, vote animations
+- [x] Phase 2: spectator mode, game-end overlay, vote indicator fade, chat feed
