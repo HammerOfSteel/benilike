@@ -30,6 +30,9 @@ const CHAR_MODELS = [
 ]
 CHAR_MODELS.forEach(p => useGLTF.preload(p))
 useGLTF.preload('/models/Office_Desk_1.glb')
+useGLTF.preload('/models/Chair_A.glb')
+useGLTF.preload('/models/Computer_Monitor.glb')
+useGLTF.preload('/models/Bookshelf.glb')
 
 function charIndex(name: string): number {
   let h = 0
@@ -56,8 +59,13 @@ function CharacterModel({ name, opacity = 1 }: { name: string; opacity?: number 
     }
     return c
   }, [scene, opacity])
-  // Model is 1.7 units tall, feet at Y=0 — matches capsule height exactly
-  return <primitive object={clone} scale={[1, 1, 1]} />
+  // Model is 1.7 units tall, feet at Y=0.
+  // Rotation offset: voxel OBJ is exported facing +X; rotate -90° around Y so forward = +Z (matches atan2 convention)
+  return (
+    <group rotation={[0, -Math.PI / 2, 0]}>
+      <primitive object={clone} scale={[1, 1, 1]} />
+    </group>
+  )
 }
 
 // ── Grid renderer (InstancedMesh per floor) ───────────────────────────────────
@@ -161,37 +169,53 @@ export interface RoomLightsState { [zone: string]: boolean }
 function RoomCeilingLights({ mapData, floor, lights }: {
   mapData: MapData; floor: number; lights: RoomLightsState
 }) {
-  const floorY   = floor * FLOOR_HEIGHT
-  const ceilY    = floorY + WALL_HEIGHT
+  const floorY = floor * FLOOR_HEIGHT
+  const ceilY  = floorY + WALL_HEIGHT
   return (
     <>
       {mapData.rooms.filter(r => r.floor === floor).map((room, i) => {
-        const isOn   = lights[room.zone ?? ''] !== false  // default on
+        const isOn   = lights[room.zone ?? ''] !== false
         const lcolor = ZONE_LIGHT_COLORS[room.zone ?? ''] ?? '#e8e0ff'
-        const pw     = Math.min(room.wx2 - room.wx1 - 1, 6)
-        const pd     = Math.min(room.wz2 - room.wz1 - 1, 6)
+        const rw     = room.wx2 - room.wx1
+        const rd     = room.wz2 - room.wz1
+        // Fluorescent tube layout: tubes run along Z, spaced across X
+        const tubeLen   = Math.min(rd - 1, 5)
+        const numTubes  = Math.max(1, Math.floor((rw - 1) / 3.5))
+        const tubeSpan  = Math.min(rw - 1.5, (numTubes - 1) * 3.2)
+        const tubes = Array.from({ length: numTubes }, (_, t) => {
+          const tx = numTubes > 1 ? -tubeSpan / 2 + t * (tubeSpan / (numTubes - 1)) : 0
+          return tx
+        })
         return (
           <group key={i} position={[room.wcx, ceilY, room.wcz]}>
-            {/* Ceiling panel */}
+            {/* Ceiling housing panel */}
             <mesh>
-              <boxGeometry args={[pw, 0.1, pd]} />
-              <meshStandardMaterial
-                color={isOn ? lcolor : '#1a1a28'}
-                emissive={isOn ? lcolor : '#000'}
-                emissiveIntensity={isOn ? 0.9 : 0}
-              />
+              <boxGeometry args={[Math.min(rw - 0.5, numTubes * 3.0 + 0.6), 0.06, tubeLen + 0.4]} />
+              <meshStandardMaterial color={isOn ? '#2a2a3a' : '#1a1a28'} roughness={0.95} />
             </mesh>
-            {/* Light cone downward */}
-            {isOn && (
+            {/* Individual fluorescent tubes */}
+            {tubes.map((tx, ti) => (
+              <mesh key={ti} position={[tx, -0.02, 0]}>
+                <boxGeometry args={[0.12, 0.05, tubeLen]} />
+                <meshStandardMaterial
+                  color={isOn ? '#fffde8' : '#1a1a28'}
+                  emissive={isOn ? '#fffde8' : '#000'}
+                  emissiveIntensity={isOn ? 2.5 : 0}
+                />
+              </mesh>
+            ))}
+            {/* Point lights spread along tube positions */}
+            {isOn && tubes.map((tx, ti) => (
               <pointLight
-                position={[0, -0.5, 0]}
-                intensity={2.5}
-                distance={18}
+                key={ti}
+                position={[tx, -0.8, 0]}
+                intensity={3.5 / numTubes}
+                distance={16}
                 decay={2}
                 color={lcolor}
                 castShadow={false}
               />
-            )}
+            ))}
           </group>
         )
       })}
@@ -285,6 +309,49 @@ function RoomSigns({ mapData, floor }: { mapData: MapData; floor: number }) {
   )
 }
 
+// ── Room decoration (bookshelves + file cabinets along back walls) ─────────────
+useGLTF.preload('/models/Bookshelf.glb')
+useGLTF.preload('/models/FileCabinet_Standard.glb')
+
+function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number }) {
+  const floorY = floor * FLOOR_HEIGHT
+  const { scene: shelfScene    } = useGLTF('/models/Bookshelf.glb')
+  const { scene: cabinetScene  } = useGLTF('/models/FileCabinet_Standard.glb')
+
+  const items = useMemo(() => {
+    const out: { key: string; scene: THREE.Group; x: number; z: number; ry: number }[] = []
+    mapData.rooms.filter(r => r.floor === floor).forEach((room, ri) => {
+      const rw = room.wx2 - room.wx1
+      const rd = room.wz2 - room.wz1
+      // Only decorate rooms big enough
+      if (rw < 5 || rd < 5) return
+      // Back wall (high Z): bookshelves spaced ~3 units apart
+      const numShelves = Math.max(1, Math.floor((rw - 3) / 4))
+      for (let s = 0; s < numShelves; s++) {
+        const tx = room.wx1 + 1.5 + s * (rw - 3) / Math.max(numShelves - 1, 1)
+        out.push({ key: `shelf-${ri}-${s}`, scene: shelfScene.clone(true), x: tx, z: room.wz2 - 0.7, ry: 0 })
+      }
+      // Side wall (low X): a file cabinet in the corner
+      if (rw >= 6 && rd >= 6) {
+        out.push({ key: `cab-${ri}`, scene: cabinetScene.clone(true), x: room.wx1 + 0.8, z: room.wz1 + 1.5, ry: Math.PI / 2 })
+      }
+    })
+    return out
+  }, [mapData, floor, shelfScene, cabinetScene])
+
+  return (
+    <>
+      {items.map(item => (
+        <primitive key={item.key} object={item.scene}
+          scale={[0.009, 0.009, 0.009]}
+          position={[item.x, floorY, item.z]}
+          rotation={[0, item.ry, 0]}
+        />
+      ))}
+    </>
+  )
+}
+
 // ── Workstation ───────────────────────────────────────────────────────────────
 function Workstation({
   station, hasMyTask, isHolding, isComplete, floorY,
@@ -296,18 +363,26 @@ function Workstation({
   const emissive = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
   const emInt    = isHolding ? 2.2 : hasMyTask ? 0.6 : 0.08
 
-  const { scene: deskScene } = useGLTF('/models/Office_Desk_1.glb')
-  const deskClone = useMemo(() => deskScene.clone(true), [deskScene])
+  const { scene: deskScene    } = useGLTF('/models/Office_Desk_1.glb')
+  const { scene: chairScene   } = useGLTF('/models/Chair_A.glb')
+  const { scene: monitorScene } = useGLTF('/models/Computer_Monitor.glb')
+  const deskClone    = useMemo(() => deskScene.clone(true),    [deskScene])
+  const chairClone   = useMemo(() => chairScene.clone(true),   [chairScene])
+  const monitorClone = useMemo(() => monitorScene.clone(true), [monitorScene])
 
   return (
     <group position={[station.x, floorY, station.z]}>
-      {/* 3D desk model — scale 0.009 (cm→game units, ~0.85 high × 1.33 wide) */}
+      {/* Desk */}
       <primitive object={deskClone} scale={[0.009, 0.009, 0.009]} />
-      {/* Monitor screen on top */}
-      <mesh position={[0, 0.95, -0.28]}>
-        <boxGeometry args={[0.68, 0.44, 0.04]} />
-        <meshStandardMaterial color="#0f0f23" emissive={emissive} emissiveIntensity={emInt * 0.4} />
-      </mesh>
+      {/* Office chair behind desk */}
+      <primitive object={chairClone} scale={[0.009, 0.009, 0.009]}
+        position={[0, 0, 0.85]} rotation={[0, Math.PI, 0]} />
+      {/* Monitor on desk surface (desk ~0.85 high, monitor base ~0 at origin) */}
+      <group position={[0, 0.85, -0.22]}>
+        <primitive object={monitorClone} scale={[0.009, 0.009, 0.009]} />
+        {/* Screen glow */}
+        <pointLight position={[0, 0.25, -0.1]} intensity={emInt * 0.6} distance={2.5} decay={2} color={emissive} />
+      </group>
       {hasMyTask && !isComplete && (
         <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[1.05, 1.25, 32]} />
@@ -361,14 +436,26 @@ function PlayerMesh({
   speechBubble?: string
   voteIndicator?: string   // e.g. "→ Dave" or "⏭ skip"
 }) {
-  const groupRef = useRef<THREE.Group>(null)
-  const floorY   = pFloor * FLOOR_HEIGHT
+  const groupRef     = useRef<THREE.Group>(null)
+  const modelRef     = useRef<THREE.Group>(null)
+  const walkPhase    = useRef(0)
+  const prevX        = useRef(x)
+  const prevZ        = useRef(z)
+  const floorY       = pFloor * FLOOR_HEIGHT
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (groupRef.current) {
       _v3.set(x, floorY, z)
       groupRef.current.position.lerp(_v3, 0.25)
       groupRef.current.rotation.y = facing
+    }
+    // Procedural walk bob
+    const moved = Math.hypot(x - prevX.current, z - prevZ.current)
+    if (moved > 0.015) walkPhase.current += delta * 10
+    prevX.current = x
+    prevZ.current = z
+    if (modelRef.current) {
+      modelRef.current.position.y = Math.abs(Math.sin(walkPhase.current)) * 0.07
     }
   })
 
@@ -376,8 +463,10 @@ function PlayerMesh({
 
   return (
     <group ref={groupRef} position={[x, floorY, z]}>
-      {/* Voxel character model */}
-      <CharacterModel name={name ?? ''} opacity={isEliminated ? 0.35 : 1} />
+      {/* Voxel character model with walk bob */}
+      <group ref={modelRef}>
+        <CharacterModel name={name ?? ''} opacity={isEliminated ? 0.35 : 1} />
+      </group>
       {/* Colour-coded floor ring: purple = local, amber = bot, blue = human */}
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.32, 0.48, 24]} />
@@ -530,13 +619,16 @@ function LocalPlayerController({
   onZoneChange:  (zone: string | null) => void
   onNearBody:    (body: BodyInfo | null) => void
 }) {
-  const keys      = useKeyboard()
-  const facingRef  = useRef(0)
-  const lastSent   = useRef(0)
-  const lastToggle = useRef(0); void lastToggle
-  const groupRef  = useRef<THREE.Group>(null)
-  const prevZone  = useRef<string | null>(null)
-  const prevSwitch = useRef<string | null>(null)
+  const keys        = useKeyboard()
+  const facingRef   = useRef(0)
+  const lastSent    = useRef(0)
+  const lastToggle  = useRef(0); void lastToggle
+  const groupRef    = useRef<THREE.Group>(null)
+  const modelRef    = useRef<THREE.Group>(null)
+  const walkPhase   = useRef(0)
+  const isMovingRef = useRef(false)
+  const prevZone    = useRef<string | null>(null)
+  const prevSwitch  = useRef<string | null>(null)
   const localName  = useGameRoom(s => {
     const sid = s.room?.sessionId
     return s.players.find(p => p.sessionId === sid)?.name ?? ''
@@ -550,6 +642,7 @@ function LocalPlayerController({
     if (k['KeyA'] || k['ArrowLeft'])  dx -= 1
     if (k['KeyD'] || k['ArrowRight']) dx += 1
 
+    isMovingRef.current = (dx !== 0 || dz !== 0)
     if (dx !== 0 || dz !== 0) {
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
@@ -571,6 +664,11 @@ function LocalPlayerController({
     if (groupRef.current) {
       groupRef.current.position.set(localPos.x, localFloor * FLOOR_HEIGHT, localPos.z)
       groupRef.current.rotation.y = facingRef.current
+    }
+    // Walk bob
+    if (isMovingRef.current) walkPhase.current += delta * 10
+    if (modelRef.current) {
+      modelRef.current.position.y = Math.abs(Math.sin(walkPhase.current)) * 0.07
     }
 
     // Staircase transitions
@@ -653,7 +751,9 @@ function LocalPlayerController({
   const color = '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
-      <CharacterModel name={localName} />
+      <group ref={modelRef}>
+        <CharacterModel name={localName} />
+      </group>
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.32, 0.48, 24]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.4} transparent opacity={0.85} />
@@ -827,8 +927,10 @@ function Scene({
 
   return (
     <>
-      <ambientLight intensity={0.45} color="#8080cc" />
-      <directionalLight position={[20, 30, 20]} intensity={0.6} castShadow={false} />
+      {/* Office lighting: hemisphere (cool sky / warm floor bounce) + soft directional */}
+      <hemisphereLight args={['#c0ccf8', '#2a180a', 0.55]} />
+      <ambientLight intensity={0.18} color="#f0eeff" />
+      <directionalLight position={[20, 30, 20]} intensity={0.22} castShadow={false} />
 
       {/* Camera: meeting room → spectator follow → spectator free → player follow */}
       {meetingActive  && <MeetingCamera center={meetingCenter} />}
@@ -850,6 +952,7 @@ function Scene({
           <LightSwitches    mapData={mapData} floor={renderFloor} lights={roomLights} nearZone={nearSwitch} />
           <StaircaseVisuals mapData={mapData} floor={renderFloor} />
           <RoomSigns        mapData={mapData} floor={renderFloor} />
+          <RoomDecoration   mapData={mapData} floor={renderFloor} />
         </group>
       )}
 
