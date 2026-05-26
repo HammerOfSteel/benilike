@@ -42,6 +42,11 @@ interface GameRoomStore {
   myCoverTasks:       TaskId[]   // original role tasks — never change between sprints
   aiPhase:            number
   aiPhaseTasks:       TaskId[]
+  aiExtraVoteReady:      boolean    // vote counts ×2 in next meeting
+  aiInvisibilityUnlocked: boolean   // Q-hold ability permanently granted
+  aiInvisibleActive:     boolean    // currently invisible (local player)
+  aiInvisibilityCooldownUntil: number  // epoch ms
+  invisiblePlayers:   string[]    // sessionIds of currently-invisible players
   players:            LobbyPlayer[]
   incidents:          { text: string; type: 'info' | 'warn' | 'danger' | 'success'; time: string }[]
   gameEnd:            { winner: string; reason: string } | null
@@ -80,6 +85,12 @@ interface GameRoomStore {
   setSpectator:       (isSpectator: boolean) => void
   setSpectateTarget:  (sessionId: string | null) => void
   setAiRevealed:      (sessionId: string, tasks: TaskId[]) => void
+  setAiExtraVoteReady:       (ready: boolean) => void
+  setAiInvisibilityUnlocked: (unlocked: boolean) => void
+  setAiInvisibleActive:      (active: boolean) => void
+  setAiInvisibilityCooldownUntil: (until: number) => void
+  addInvisiblePlayer:        (sessionId: string) => void
+  removeInvisiblePlayer:     (sessionId: string) => void
   clearRoom:          () => void
 }
 
@@ -91,6 +102,11 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   myCoverTasks:     [],
   aiPhase:          0,
   aiPhaseTasks:     [],
+  aiExtraVoteReady:          false,
+  aiInvisibilityUnlocked:    false,
+  aiInvisibleActive:         false,
+  aiInvisibilityCooldownUntil: 0,
+  invisiblePlayers:          [],
   players:          [],
   incidents:        [],
   gameEnd:          null,
@@ -156,11 +172,19 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   },
   setSpectateTarget:(spectateTarget) => set({ spectateTarget }),
   setAiRevealed:    (aiRevealedId, aiRevealedTasks) => set({ aiRevealedId, aiRevealedTasks }),
+  setAiExtraVoteReady:           (aiExtraVoteReady) => set({ aiExtraVoteReady }),
+  setAiInvisibilityUnlocked:     (aiInvisibilityUnlocked) => set({ aiInvisibilityUnlocked }),
+  setAiInvisibleActive:          (aiInvisibleActive) => set({ aiInvisibleActive }),
+  setAiInvisibilityCooldownUntil:(aiInvisibilityCooldownUntil) => set({ aiInvisibilityCooldownUntil }),
+  addInvisiblePlayer:    (id) => set(s => ({ invisiblePlayers: [...s.invisiblePlayers.filter(x => x !== id), id] })),
+  removeInvisiblePlayer: (id) => set(s => ({ invisiblePlayers: s.invisiblePlayers.filter(x => x !== id) })),
   clearRoom:        () => {
     console.log('[BENI:store] clearRoom() called — isSpectator → false')
     set({
       room: null, myRole: null, myAssignedTasks: [], myIsAi: false,
       myCoverTasks: [], aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
+      aiExtraVoteReady: false, aiInvisibilityUnlocked: false, aiInvisibleActive: false,
+      aiInvisibilityCooldownUntil: 0, invisiblePlayers: [],
       stations: [], completedTasks: new Set(), holdingStationId: null,
       holdStartedAt: 0, toasts: [], bodies: [], sprint: null, retroData: null,
       isSpectator: false, spectateTarget: null, aiRevealedId: null, aiRevealedTasks: [],

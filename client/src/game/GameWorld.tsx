@@ -1003,7 +1003,7 @@ function LocalPlayerController({
 
     // ── Kill proximity (Rogue AI only, unlocks when aiPhase >= 2) ────────────
     const mySessionId = gs.room?.sessionId
-    const canKill = gs.myIsAi && gs.aiPhase >= 2
+    const canKill = gs.myIsAi  // kill is always available for the Rogue AI
     const nearKillable = canKill ? (gs.players.find(p => {
       if (p.sessionId === mySessionId || p.isEliminated || p.isSpectator) return false
       if ((p.floor ?? 0) !== localFloor) return false
@@ -1029,10 +1029,11 @@ function LocalPlayerController({
     }
   })
 
+  const aiInvisibleActive = useGameRoom(s => s.aiInvisibleActive)
   const color = '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
-      <KayKitCharacter name={localName} movingRef={movingRef} />
+      <KayKitCharacter name={localName} movingRef={movingRef} opacity={aiInvisibleActive ? 0.25 : 1} />
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.32, 0.48, 24]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.4} transparent opacity={0.85} />
@@ -1060,11 +1061,12 @@ function Scene({
   onNearKillTarget: (target: { sessionId: string; name: string } | null) => void
 }) {
   const { players, room, stations, completedTasks, holdingStationId } = useGameRoom()
-  const myAssignedTasks = useGameRoom(s => s.myAssignedTasks)
-  const bodies  = useGameRoom(s => s.bodies)
-  const mapSeed = useGameRoom(s => s.mapSeed)
-  const mapSize = useGameRoom(s => s.mapSize)
-  const myRole  = useGameRoom(s => s.myRole)
+  const myAssignedTasks    = useGameRoom(s => s.myAssignedTasks)
+  const bodies             = useGameRoom(s => s.bodies)
+  const mapSeed            = useGameRoom(s => s.mapSeed)
+  const mapSize            = useGameRoom(s => s.mapSize)
+  const myRole             = useGameRoom(s => s.myRole)
+  const invisiblePlayers   = useGameRoom(s => s.invisiblePlayers)
   const [renderFloor,  setRenderFloor]  = useState(0)
   const [roomLights,   setRoomLights]   = useState<RoomLightsState>({})
   const [nearSwitch,   setNearSwitch]   = useState<string | null>(null)
@@ -1194,6 +1196,29 @@ function Scene({
     room.onMessage('game_end',      (d: { winner: string; reason: string }) => useGameRoom.getState().setGameEnd(d.winner, d.reason))
     room.onMessage('incident',      (d: { message: string; severity: string; time: string }) => useGameRoom.getState().addIncident(d.message, d.severity as any, d.time))
 
+    // AI buff unlocks
+    room.onMessage('ai_buff', (d: { type: string; message: string }) => {
+      const gs2 = useGameRoom.getState()
+      gs2.addIncident(d.message, 'success')
+      if (d.type === 'extra_vote')           gs2.setAiExtraVoteReady(true)
+      if (d.type === 'invisibility_unlocked') gs2.setAiInvisibilityUnlocked(true)
+    })
+
+    // Invisibility tracking
+    room.onMessage('invisible_start', (d: { sessionId: string }) => {
+      const gs2 = useGameRoom.getState()
+      gs2.addInvisiblePlayer(d.sessionId)
+      if (d.sessionId === gs2.room?.sessionId) gs2.setAiInvisibleActive(true)
+    })
+    room.onMessage('invisible_end', (d: { sessionId: string }) => {
+      const gs2 = useGameRoom.getState()
+      gs2.removeInvisiblePlayer(d.sessionId)
+      if (d.sessionId === gs2.room?.sessionId) {
+        gs2.setAiInvisibleActive(false)
+        gs2.setAiInvisibilityCooldownUntil(Date.now() + 30_000)
+      }
+    })
+
     // Recovery: if stations were missed (race with game_start), ask the server to resend
     if (useGameRoom.getState().stations.length === 0 && useGameRoom.getState().mapSeed !== '') {
       room.send('request_station_list', {})
@@ -1268,8 +1293,8 @@ function Scene({
         </group>
       )}
 
-      {/* Remote players */}
-      {players.filter(p => p.sessionId !== mySessionId && !p.isSpectator).map(p => {
+      {/* Remote players — players in invisiblePlayers set are hidden from non-AI clients */}
+      {players.filter(p => p.sessionId !== mySessionId && !p.isSpectator && !invisiblePlayers.includes(p.sessionId)).map(p => {
         const mPos = meetingActive
           ? (meetingPosMap[p.sessionId] ?? { x: meetingCenter.x, z: meetingCenter.z })
           : undefined

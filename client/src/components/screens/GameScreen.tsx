@@ -110,6 +110,66 @@ export default function GameScreen({ onNavigate }: Props) {
   const handleNearKillTarget = useCallback((t: { sessionId: string; name: string } | null) => setNearKillTarget(t), [])
   const handleZoneChange   = useCallback((z: string | null)      => setCurrentZone(z), [])
 
+  // ── Q-hold invisibility mechanic ─────────────────────────────────────────
+  const aiInvisibilityUnlocked  = useGameRoom(s => s.aiInvisibilityUnlocked)
+  const aiInvisibleActive       = useGameRoom(s => s.aiInvisibleActive)
+  const aiInvisibilityCooldownUntil = useGameRoom(s => s.aiInvisibilityCooldownUntil)
+  const aiExtraVoteReady        = useGameRoom(s => s.aiExtraVoteReady)
+  const [qHoldProgress, setQHoldProgress] = useState(0)
+  const qHoldStart = useRef<number | null>(null)
+  const qRaf       = useRef<number>(0)
+  const Q_HOLD_MS  = 3000
+
+  useEffect(() => {
+    if (!myIsAi || !aiInvisibilityUnlocked) return
+
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyQ' || e.repeat) return
+      if (aiInvisibleActive || Date.now() < aiInvisibilityCooldownUntil) return
+      qHoldStart.current = Date.now()
+
+      const tick = () => {
+        if (!qHoldStart.current) return
+        const elapsed = Date.now() - qHoldStart.current
+        const pct     = Math.min(1, elapsed / Q_HOLD_MS)
+        setQHoldProgress(pct)
+        if (pct < 1) {
+          qRaf.current = requestAnimationFrame(tick)
+        } else {
+          room?.send('ai_invisibility_activate', {})
+          qHoldStart.current = null
+          setQHoldProgress(0)
+        }
+      }
+      qRaf.current = requestAnimationFrame(tick)
+    }
+
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyQ') return
+      if (qHoldStart.current) {
+        qHoldStart.current = null
+        cancelAnimationFrame(qRaf.current)
+        setQHoldProgress(0)
+      }
+    }
+
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup',   onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup',   onUp)
+      cancelAnimationFrame(qRaf.current)
+    }
+  }, [myIsAi, aiInvisibilityUnlocked, aiInvisibleActive, aiInvisibilityCooldownUntil, room])
+
+  // Cooldown countdown display (recomputed on each render via state tick)
+  const [, forceUpdate] = useState(0)
+  useEffect(() => {
+    if (aiInvisibilityCooldownUntil <= Date.now()) return
+    const id = setInterval(() => forceUpdate(n => n + 1), 500)
+    return () => clearInterval(id)
+  }, [aiInvisibilityCooldownUntil])
+
   // Clear expired toasts
   useEffect(() => {
     const tick = () => {
@@ -267,10 +327,64 @@ export default function GameScreen({ onNavigate }: Props) {
         </div>
       )}
 
-      {/* ── Kill prompt (Rogue AI only, phase 1 complete) ── */}
+      {/* ── Kill prompt (Rogue AI only — always available) ── */}
       {nearKillTarget && myIsAi && !nearStation && !nearBody && (
         <div className={styles.hudInteract} style={{ color: '#ff2222', fontWeight: 700 }}>
           [E] ELIMINATE — {nearKillTarget.name}
+        </div>
+      )}
+
+      {/* ── AI Abilities HUD (Rogue AI only) ── */}
+      {myIsAi && (
+        <div style={{
+          position: 'absolute', top: 60, right: 16,
+          display: 'flex', flexDirection: 'column', gap: 6,
+          alignItems: 'flex-end', pointerEvents: 'none',
+        }}>
+          {/* Extra vote indicator */}
+          {aiExtraVoteReady && (
+            <div style={{
+              background: 'rgba(99,30,255,0.85)', border: '1px solid #a78bfa',
+              borderRadius: 6, padding: '4px 10px', fontSize: 11,
+              color: '#ede9fe', fontFamily: 'monospace', letterSpacing: 1,
+            }}>
+              ✦ VOTE ×2 READY
+            </div>
+          )}
+
+          {/* Invisibility ability */}
+          {aiInvisibilityUnlocked && (() => {
+            const now = Date.now()
+            const onCooldown = aiInvisibilityCooldownUntil > now
+            const cooldownSec = Math.ceil((aiInvisibilityCooldownUntil - now) / 1000)
+            return (
+              <div style={{
+                background: 'rgba(0,0,0,0.75)', border: `1px solid ${aiInvisibleActive ? '#22d3ee' : onCooldown ? '#475569' : '#6ee7b7'}`,
+                borderRadius: 6, padding: '4px 10px', fontSize: 11,
+                color: aiInvisibleActive ? '#22d3ee' : onCooldown ? '#94a3b8' : '#6ee7b7',
+                fontFamily: 'monospace', letterSpacing: 1,
+              }}>
+                {aiInvisibleActive
+                  ? 'Q · INVISIBLE'
+                  : onCooldown
+                    ? `Q · VANISH [${cooldownSec}s]`
+                    : 'Q · VANISH ready'}
+              </div>
+            )
+          })()}
+
+          {/* Q-hold progress bar */}
+          {qHoldProgress > 0 && (
+            <div style={{
+              width: 120, height: 6, background: 'rgba(255,255,255,0.15)',
+              borderRadius: 3, overflow: 'hidden',
+            }}>
+              <div style={{
+                height: '100%', width: `${qHoldProgress * 100}%`,
+                background: '#22d3ee', transition: 'none',
+              }} />
+            </div>
+          )}
         </div>
       )}
 
@@ -309,7 +423,7 @@ export default function GameScreen({ onNavigate }: Props) {
       </div>
 
       <div className={styles.hudCornerBL}>
-        <span className={styles.roomCodeHint}>WASD · MOVE &nbsp;·&nbsp; E · INTERACT &nbsp;·&nbsp; R · ALL-HANDS &nbsp;·&nbsp; RMB · ROTATE CAM &nbsp;·&nbsp; SCROLL · ZOOM</span>
+        <span className={styles.roomCodeHint}>WASD · MOVE &nbsp;·&nbsp; E · INTERACT &nbsp;·&nbsp; R · ALL-HANDS{myIsAi && aiInvisibilityUnlocked ? ' &nbsp;·&nbsp; Q (hold) · VANISH' : ''} &nbsp;·&nbsp; RMB · ROTATE CAM &nbsp;·&nbsp; SCROLL · ZOOM</span>
         <button className={styles.ghostBtn} onClick={handleLeave} style={{ marginTop: '0.4rem' }}>
           ESC LEAVE
         </button>

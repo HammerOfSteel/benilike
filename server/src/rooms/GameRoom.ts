@@ -143,7 +143,14 @@ export class GameRoom extends Room<GameState> {
   private assignedTasks   = new Map<string, TaskId[]>() // sessionId → assigned task ids
   private sprintPlayerDone = new Map<string, number>()  // sessionId → tasks completed this sprint
   private allHandsTimeout: ReturnType<typeof this.clock.setTimeout> | null = null
-  private killCooldowns   = new Map<string, number>()  // sessionId → last-kill timestamp
+  private killCooldowns        = new Map<string, number>()  // sessionId → last-kill timestamp
+  private aiPhase1DoneCount      = 0       // # sprints where AI finished all 3 phase-1 tasks
+  private aiExtraVoteReady       = false   // AI vote counts ×2 in next meeting
+  private aiInvisibilityUnlocked = false   // permanently unlocked after 2 sprint completions
+  private aiInvisibleUntil       = 0       // epoch ms when active invis expires
+  private aiInvisibilityCooldown = 0       // epoch ms when cooldown ends
+  private aiInvisLastX           = 0
+  private aiInvisLastZ           = 0
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -255,6 +262,15 @@ export class GameRoom extends Room<GameState> {
             if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R) {
               this.holdState.delete(client.sessionId)
             }
+          }
+        }
+
+        // Cancel invisibility if AI player moves
+        if (client.sessionId === this.aiSessionId && this.aiInvisibleUntil > Date.now()) {
+          const mdx = data.x - this.aiInvisLastX
+          const mdz = data.z - this.aiInvisLastZ
+          if (Math.sqrt(mdx * mdx + mdz * mdz) > 0.3) {
+            this.endInvisibility()
           }
         }
       } catch (err) {
@@ -420,6 +436,40 @@ export class GameRoom extends Room<GameState> {
         this.checkWinConditions()
       } catch (err) {
         console.error('[GameRoom] kill error:', err)
+      }
+    })
+
+    // ── Invisibility (Rogue AI only, unlocked after 2 sprint completions) ──────────────
+    this.onMessage('ai_invisibility_activate', (client: Client) => {
+      try {
+        if (this.state.phase !== 'game') return
+        if (client.sessionId !== this.aiSessionId) return
+        if (!this.aiInvisibilityUnlocked) return
+        if (Date.now() < this.aiInvisibilityCooldown) {
+          const secsLeft = Math.ceil((this.aiInvisibilityCooldown - Date.now()) / 1000)
+          client.send('incident', { message: `Invis on cooldown — ${secsLeft}s remaining.`, severity: 'warn', time: new Date().toISOString() })
+          return
+        }
+        if (this.aiInvisibleUntil > Date.now()) return  // already active
+
+        const player = this.state.players.get(client.sessionId)
+        if (!player) return
+
+        this.aiInvisibleUntil = Date.now() + 5_000
+        this.aiInvisibilityCooldown = Date.now() + 5_000 + 30_000
+        this.aiInvisLastX = player.x
+        this.aiInvisLastZ = player.z
+
+        this.broadcast('invisible_start', { sessionId: client.sessionId })
+
+        // Auto-expire after 5 s if not cancelled by movement
+        this.clock.setTimeout(() => {
+          if (this.aiInvisibleUntil > 0 && this.state.phase === 'game') {
+            this.endInvisibility()
+          }
+        }, 5_100)
+      } catch (err) {
+        console.error('[GameRoom] ai_invisibility_activate error:', err)
       }
     })
 
@@ -659,36 +709,45 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  // ── AI phase progression ───────────────────────────────────────────────────
+  // ── AI phase-1 completion → sprint buff grants ──────────────────────────────
+  // Old phase-2/3 progression removed. Completing the 3 phase-1 tasks each
+  // sprint now grants escalating abilities instead of unlocking new task phases.
 
   private checkAiPhaseAdvance(aiSessionId: string) {
     try {
-      const currentPhaseTasks = AI_TASK_DEFS.filter(t => t.aiPhase === this.aiPhase)
-      const allCurrentDone    = currentPhaseTasks.every(t => this.aiPhaseCompleted.has(t.id))
-      if (!allCurrentDone) return
+      const phase1Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 1)
+      const allDone     = phase1Tasks.every(t => this.aiPhaseCompleted.has(t.id))
+      if (!allDone) return
 
-      if (this.aiPhase < 3) {
-        const nextPhase = (this.aiPhase + 1) as AiPhase
-        this.aiPhase    = nextPhase
-        const newTasks  = AI_TASK_DEFS.filter(t => t.aiPhase === nextPhase).map(t => t.id)
+      this.aiPhase1DoneCount++
 
-        // Update assigned tasks for AI player
-        const existing = this.assignedTasks.get(aiSessionId) ?? []
-        this.assignedTasks.set(aiSessionId, [...existing, ...newTasks])
+      const aiClient = this.clients.find(c => c.sessionId === aiSessionId)
 
-        const aiClient = this.clients.find(c => c.sessionId === aiSessionId)
-        aiClient?.send('ai_briefing', { phase: nextPhase, phaseTasks: newTasks })
+      // Buff 1 (any sprint): extra vote weight in next meeting
+      this.aiExtraVoteReady = true
+      aiClient?.send('ai_buff', {
+        type:    'extra_vote',
+        message: 'Phase complete — your next vote counts double!',
+        count:   this.aiPhase1DoneCount,
+      })
 
-        // Phase 2 flicker effect
-        if (nextPhase === 2) {
-          const zones: ZoneId[] = ['server_room', 'devops_den', 'finance_floor']
-          for (const zone of zones) {
-            this.broadcast('phase2_flicker', { zone })
-          }
-        }
+      // Buff 2 (2nd sprint): invisibility ability permanently unlocked
+      if (this.aiPhase1DoneCount >= 2 && !this.aiInvisibilityUnlocked) {
+        this.aiInvisibilityUnlocked = true
+        aiClient?.send('ai_buff', {
+          type:    'invisibility_unlocked',
+          message: 'Invisibility unlocked! Hold Q for 3 s to vanish (5 s duration, 30 s cooldown).',
+        })
       }
     } catch (err) {
       console.error('[GameRoom.checkAiPhaseAdvance] Error:', err)
+    }
+  }
+
+  private endInvisibility() {
+    this.aiInvisibleUntil = 0
+    if (this.aiSessionId) {
+      this.broadcast('invisible_end', { sessionId: this.aiSessionId })
     }
   }
 
@@ -874,10 +933,13 @@ export class GameRoom extends Room<GameState> {
       }
 
       const tally = new Map<string, number>()
-      for (const [, target] of this.votes) {
+      for (const [voterId, target] of this.votes) {
         if (target === 'skip') continue
-        tally.set(target, (tally.get(target) ?? 0) + 1)
+        // Extra vote: AI player's vote counts double when buff is active
+        const weight = (this.aiExtraVoteReady && voterId === this.aiSessionId) ? 2 : 1
+        tally.set(target, (tally.get(target) ?? 0) + weight)
       }
+      this.aiExtraVoteReady = false  // consumed
 
       let ejected:   string | null = null
       let maxVotes   = 0

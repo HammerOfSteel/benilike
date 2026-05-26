@@ -13,7 +13,9 @@ interface Props { onNavigate: (s: Screen) => void }
 
 export default function MeetingScreen({ onNavigate }: Props) {
   const { room, players } = useGameRoom()
-  const isSpectator = useGameRoom(s => s.isSpectator)
+  const isSpectator     = useGameRoom(s => s.isSpectator)
+  const myIsAi          = useGameRoom(s => s.myIsAi)
+  const aiExtraVoteReady = useGameRoom(s => s.aiExtraVoteReady)
 
   useEffect(() => {
     console.warn(`[BENI:MeetingScreen] mounted — isSpectator=${isSpectator}`)
@@ -147,6 +149,17 @@ export default function MeetingScreen({ onNavigate }: Props) {
               ? 'Vote cast — waiting for others…'
               : 'Vote now. Who is the Rogue AI?'}
         </div>
+
+        {/* Double-vote indicator for AI player */}
+        {myIsAi && aiExtraVoteReady && (
+          <div style={{
+            fontSize: '0.78rem', color: '#a78bfa', marginBottom: '0.6rem',
+            background: 'rgba(99,30,255,0.2)', borderRadius: 6,
+            padding: '4px 10px', textAlign: 'center',
+          }}>
+            ✦ Your vote counts double this round!
+          </div>
+        )}
 
         {/* Vote buttons — available immediately for the full 45 s */}
         {!isSpectator && (
