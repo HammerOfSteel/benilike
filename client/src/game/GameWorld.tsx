@@ -367,35 +367,114 @@ function RoomSigns({ mapData, floor }: { mapData: MapData; floor: number }) {
   )
 }
 
-// ── Room decoration (bookshelves + file cabinets along back walls) ─────────────
+// ── Procedural office plant ────────────────────────────────────────────────────
+function OfficePlant({ x, z, floorY, seed = 0 }: { x: number; z: number; floorY: number; seed?: number }) {
+  const potH    = 0.35 + (seed % 3) * 0.07
+  const foliageR = 0.38 + (seed % 5) * 0.06
+  const green   = ['#4a7c59', '#5a8c3c', '#3d6e4e', '#6a9e4c'][seed % 4]
+  return (
+    <group position={[x, floorY, z]}>
+      {/* terracotta pot */}
+      <mesh position={[0, potH / 2, 0]}>
+        <cylinderGeometry args={[0.18, 0.13, potH, 10]} />
+        <meshStandardMaterial color="#b5623a" roughness={0.85} />
+      </mesh>
+      {/* soil top */}
+      <mesh position={[0, potH + 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.17, 10]} />
+        <meshStandardMaterial color="#3b2516" roughness={1} />
+      </mesh>
+      {/* foliage — 3 overlapping spheres for a bushy look */}
+      {[0, 1.1, 2.2].map((ang, i) => (
+        <mesh key={i}
+          position={[
+            Math.cos(ang * 2) * foliageR * 0.35,
+            potH + foliageR * 0.7 + i * 0.12,
+            Math.sin(ang * 2) * foliageR * 0.28,
+          ]}
+        >
+          <sphereGeometry args={[foliageR * (0.8 + i * 0.12), 8, 6]} />
+          <meshStandardMaterial color={green} roughness={0.9} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// ── Room decoration (bookshelves, file cabinets, coffee machines, printers, plants) ──
 useGLTF.preload('/models/Bookshelf.glb')
 useGLTF.preload('/models/FileCabinet_Standard.glb')
+useGLTF.preload('/models/CoffeeMachine.glb')
+useGLTF.preload('/models/CoffeeTable.glb')
+useGLTF.preload('/models/Printer.glb')
+
+// Zones that get a coffee machine / printer break area
+const COFFEE_ZONES = new Set(['main_office', 'hr_corner', 'exec_suite', 'marketing_hub'])
+const PRINTER_ZONES = new Set(['main_office', 'finance_floor', 'hr_corner'])
 
 function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number }) {
   const floorY = floor * FLOOR_HEIGHT
   const { scene: shelfScene    } = useGLTF('/models/Bookshelf.glb')
   const { scene: cabinetScene  } = useGLTF('/models/FileCabinet_Standard.glb')
+  const { scene: coffeeScene   } = useGLTF('/models/CoffeeMachine.glb')
+  const { scene: tableScene    } = useGLTF('/models/CoffeeTable.glb')
+  const { scene: printerScene  } = useGLTF('/models/Printer.glb')
 
   const items = useMemo(() => {
-    const out: { key: string; scene: THREE.Group; x: number; z: number; ry: number }[] = []
+    const out: { key: string; scene: THREE.Group; x: number; z: number; ry: number; scale?: number }[] = []
     mapData.rooms.filter(r => r.floor === floor).forEach((room, ri) => {
-      const rw = room.wx2 - room.wx1
-      const rd = room.wz2 - room.wz1
-      // Only decorate rooms big enough
+      const rw   = room.wx2 - room.wx1
+      const rd   = room.wz2 - room.wz1
       if (rw < 5 || rd < 5) return
-      // Back wall (high Z): bookshelves spaced ~3 units apart
-      const numShelves = Math.max(1, Math.floor((rw - 3) / 4))
-      for (let s = 0; s < numShelves; s++) {
-        const tx = room.wx1 + 1.5 + s * (rw - 3) / Math.max(numShelves - 1, 1)
-        out.push({ key: `shelf-${ri}-${s}`, scene: shelfScene.clone(true), x: tx, z: room.wz2 - 0.7, ry: 0 })
+
+      const zone = room.zone ?? ''
+      const skip = zone === 'server_room' || zone === 'network_closet'
+
+      // Back wall (high Z): bookshelves — skip server/network rooms
+      if (!skip) {
+        const numShelves = Math.max(1, Math.floor((rw - 3) / 4))
+        for (let s = 0; s < numShelves; s++) {
+          const tx = room.wx1 + 1.5 + s * (rw - 3) / Math.max(numShelves - 1, 1)
+          out.push({ key: `shelf-${ri}-${s}`, scene: shelfScene.clone(true), x: tx, z: room.wz2 - 0.7, ry: 0 })
+        }
       }
-      // Side wall (low X): a file cabinet in the corner
+
+      // Low-X corner: file cabinet
       if (rw >= 6 && rd >= 6) {
         out.push({ key: `cab-${ri}`, scene: cabinetScene.clone(true), x: room.wx1 + 0.8, z: room.wz1 + 1.5, ry: Math.PI / 2 })
       }
+
+      // Coffee machine + table in break-area zones (high-Z corner, low-X side)
+      if (COFFEE_ZONES.has(zone) && rw >= 7) {
+        const cx = room.wx2 - 1.0
+        const cz = room.wz1 + 1.2
+        out.push({ key: `coffee-${ri}`,  scene: coffeeScene.clone(true),  x: cx,        z: cz,        ry: -Math.PI / 2 })
+        out.push({ key: `ctable-${ri}`,  scene: tableScene.clone(true),   x: cx - 1.4,  z: cz + 0.3,  ry: 0 })
+      }
+
+      // Printer in office zones (low-Z corner, high-X side)
+      if (PRINTER_ZONES.has(zone) && rd >= 7) {
+        out.push({ key: `printer-${ri}`, scene: printerScene.clone(true), x: room.wx2 - 0.9, z: room.wz2 - 1.1, ry: Math.PI })
+      }
     })
     return out
-  }, [mapData, floor, shelfScene, cabinetScene])
+  }, [mapData, floor, shelfScene, cabinetScene, coffeeScene, tableScene, printerScene])
+
+  // Plant positions: far corners of rooms
+  const plants = useMemo(() => {
+    const out: { key: string; x: number; z: number; seed: number }[] = []
+    mapData.rooms.filter(r => r.floor === floor).forEach((room, ri) => {
+      const rw = room.wx2 - room.wx1
+      const rd = room.wz2 - room.wz1
+      if (rw < 6 || rd < 6) return
+      // Up to 2 plants per room in far corners
+      out.push({ key: `plant-${ri}-a`, x: room.wx2 - 0.7, z: room.wz2 - 0.8, seed: ri })
+      if (rw >= 9 && rd >= 9) {
+        out.push({ key: `plant-${ri}-b`, x: room.wx1 + 0.7, z: room.wz2 - 0.8, seed: ri + 7 })
+      }
+    })
+    return out
+  }, [mapData, floor])
 
   return (
     <>
@@ -405,6 +484,9 @@ function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number })
           position={[item.x, floorY, item.z]}
           rotation={[0, item.ry, 0]}
         />
+      ))}
+      {plants.map(p => (
+        <OfficePlant key={p.key} x={p.x} z={p.z} floorY={floorY} seed={p.seed} />
       ))}
     </>
   )
@@ -417,7 +499,6 @@ function Workstation({
   station: StationInfo; hasMyTask: boolean
   isHolding: boolean; isComplete: boolean; floorY: number
 }) {
-  const color    = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#3a3a52'
   const emissive = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
   const emInt    = isHolding ? 2.2 : hasMyTask ? 0.6 : 0.08
 
@@ -624,6 +705,11 @@ function BodyMarker({ body, floorY, isNear }: { body: BodyInfo; floorY: number; 
 }
 
 // ── Follow Camera ─────────────────────────────────────────────────────────────
+// camAngle: angle (radians) of the camera offset from the player in the XZ plane.
+// π/4 = 45° matches the original fixed offset (18, 16, 18) where R = 18√2 ≈ 25.5.
+// [ key rotates CCW, ] key rotates CW. Both controlled from LocalPlayerController.
+let camAngle = Math.PI / 4
+const CAM_R       = 26          // horizontal radius (≈ 18 * √2, rounded up)
 const CAM_DESIRED = new THREE.Vector3()
 const CAM_LOOKAT  = new THREE.Vector3()
 
@@ -632,7 +718,11 @@ function FollowCamera({ currentFloor: _cf }: { currentFloor: number }) {
   useFrame(() => {
     const floorY = localFloor * FLOOR_HEIGHT
     CAM_LOOKAT.set(localPos.x, floorY, localPos.z)
-    CAM_DESIRED.set(localPos.x + 18, floorY + 16, localPos.z + 18)
+    CAM_DESIRED.set(
+      localPos.x + CAM_R * Math.sin(camAngle),
+      floorY + 16,
+      localPos.z + CAM_R * Math.cos(camAngle),
+    )
     camera.position.lerp(CAM_DESIRED, 0.1)
     camera.lookAt(CAM_LOOKAT)
   })
@@ -684,6 +774,11 @@ function LocalPlayerController({
 
   useFrame((_, delta) => {
     const k   = keys.current
+
+    // Camera rotation: [ rotates CCW (left), ] rotates CW (right)
+    if (k['BracketLeft'])  camAngle -= 1.4 * delta
+    if (k['BracketRight']) camAngle += 1.4 * delta
+
     let dx = 0, dz = 0
     if (k['KeyW'] || k['ArrowUp'])    dz -= 1
     if (k['KeyS'] || k['ArrowDown'])  dz += 1

@@ -299,7 +299,7 @@ export default function GameScreen({ onNavigate }: Props) {
       </div>
 
       <div className={styles.hudCornerBL}>
-        <span className={styles.roomCodeHint}>WASD · MOVE &nbsp;·&nbsp; E · INTERACT &nbsp;·&nbsp; R · ALL-HANDS</span>
+        <span className={styles.roomCodeHint}>WASD · MOVE &nbsp;·&nbsp; E · INTERACT &nbsp;·&nbsp; R · ALL-HANDS &nbsp;·&nbsp; [ ] · ROTATE CAM</span>
         <button className={styles.ghostBtn} onClick={handleLeave} style={{ marginTop: '0.4rem' }}>
           ESC LEAVE
         </button>
