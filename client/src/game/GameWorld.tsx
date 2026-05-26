@@ -171,37 +171,39 @@ function GridLayer({
     <group>
       <instancedMesh ref={wallRef} args={[undefined, undefined, wallMats.length]} castShadow receiveShadow>
         <boxGeometry args={[CELL_SIZE, WALL_HEIGHT, CELL_SIZE]} />
-        <meshStandardMaterial color="#5c4f8a" roughness={0.9}
+        <meshStandardMaterial color="#d6d0c0" roughness={0.85}
           transparent={spectate} opacity={spectate ? 0.18 : 1} depthWrite={!spectate} />
       </instancedMesh>
       <instancedMesh ref={floorRef} args={[undefined, undefined, floorMats.length]} receiveShadow>
         <boxGeometry args={[CELL_SIZE, 0.12, CELL_SIZE]} />
-        <meshStandardMaterial color="#1c1b2e" roughness={0.85} />
+        <meshStandardMaterial color="#6e685a" roughness={0.9} />
       </instancedMesh>
     </group>
   )
 }
 
 // ── Zone accent overlays ──────────────────────────────────────────────────────
+// Zone floor-overlay colours — natural office tones (greens, creams, taupes)
 const ZONE_COLORS: Record<string, string> = {
-  main_office:    '#2d2a6e',
-  server_room:    '#1a2f4a',
-  network_closet: '#152640',
-  hr_corner:      '#3a1a52',
-  devops_den:     '#1a4228',
-  finance_floor:  '#4a2a0f',
-  marketing_hub:  '#4a0f28',
-  exec_suite:     '#1a2a4e',
+  main_office:    '#cdc8b8',  // warm cream carpet
+  server_room:    '#8ea8b2',  // cool grey-blue concrete
+  network_closet: '#8c9498',  // utility grey
+  hr_corner:      '#b8a090',  // warm taupe
+  devops_den:     '#7a9878',  // sage green
+  finance_floor:  '#a89e78',  // warm wheat
+  marketing_hub:  '#a88090',  // dusty mauve
+  exec_suite:     '#8898b0',  // muted slate blue
 }
+// Zone ceiling-light tint colours
 const ZONE_LIGHT_COLORS: Record<string, string> = {
-  main_office:    '#c8c0ff',
-  server_room:    '#80d4ff',
-  network_closet: '#80c8ff',
-  hr_corner:      '#e0b0ff',
-  devops_den:     '#90ffb0',
-  finance_floor:  '#ffd090',
-  marketing_hub:  '#ff90b0',
-  exec_suite:     '#a0c0ff',
+  main_office:    '#fffef0',  // neutral warm white
+  server_room:    '#b0d8f8',  // cool blue glow
+  network_closet: '#c8e0f0',  // cool grey-blue
+  hr_corner:      '#ffe8d0',  // warm friendly
+  devops_den:     '#d0f0d0',  // soft green
+  finance_floor:  '#fff0c8',  // warm amber
+  marketing_hub:  '#ffe0f0',  // soft pink
+  exec_suite:     '#e0ecff',  // prestige blue
 }
 
 function ZoneOverlays({ mapData, floor }: { mapData: MapData; floor: number }) {
@@ -216,7 +218,7 @@ function ZoneOverlays({ mapData, floor }: { mapData: MapData; floor: number }) {
         return (
           <mesh key={i} position={[cx, floorY + 0.07, cz]} receiveShadow>
             <boxGeometry args={[w, 0.025, d]} />
-            <meshStandardMaterial color={ZONE_COLORS[room.zone ?? ''] ?? '#2a2a4e'} roughness={0.9} />
+            <meshStandardMaterial color={ZONE_COLORS[room.zone ?? ''] ?? '#c0bba8'} roughness={0.9} />
           </mesh>
         )
       })}
@@ -966,10 +968,10 @@ function Scene({
 
   return (
     <>
-      {/* Office lighting: hemisphere (cool sky / warm floor bounce) + soft directional */}
-      <hemisphereLight args={['#c8d4f8', '#2a180a', 0.5]} />
-      <ambientLight intensity={0.35} color="#f0eeff" />
-      <directionalLight position={[20, 30, 20]} intensity={0.4} castShadow={false} />
+      {/* Office lighting: warm white sky / warm tan ground bounce */}
+      <hemisphereLight args={['#fff8ec', '#c8b880', 0.9]} />
+      <ambientLight intensity={0.55} color="#fffaf0" />
+      <directionalLight position={[20, 30, 20]} intensity={0.5} castShadow={false} />
 
       {/* Camera: meeting room → spectator follow → spectator free → player follow */}
       {meetingActive  && <MeetingCamera center={meetingCenter} />}
@@ -1076,7 +1078,7 @@ export default function GameWorld({
     <Canvas
       shadows
       camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
-      style={{ position: 'fixed', inset: 0, zIndex: 0 }}
+      style={{ position: 'fixed', inset: 0, zIndex: 0, width: '100vw', height: '100vh' }}
     >
       <Suspense fallback={null}>
         <Scene
