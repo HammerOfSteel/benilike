@@ -1,6 +1,6 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard } from '@react-three/drei'
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
+import { OrbitControls, Text, Billboard, useGLTF } from '@react-three/drei'
+import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
@@ -19,6 +19,46 @@ const STAIR_CD   = 1500   // ms cooldown between floor transitions
 const localPos   = new THREE.Vector3(0, 0, 0)
 let   localFloor = 0
 let   lastStair  = 0
+
+// ── 3D asset models ───────────────────────────────────────────────────────────
+const CHAR_MODELS = [
+  '/models/Char01.glb',
+  '/models/Char02.glb',
+  '/models/Char03.glb',
+  '/models/Char04.glb',
+  '/models/Char05.glb',
+]
+CHAR_MODELS.forEach(p => useGLTF.preload(p))
+useGLTF.preload('/models/Office_Desk_1.glb')
+
+function charIndex(name: string): number {
+  let h = 0
+  for (const c of name) h = (Math.imul(31, h) + c.charCodeAt(0)) | 0
+  return Math.abs(h) % CHAR_MODELS.length
+}
+
+// Renders a voxel character GLB; each caller gets its own clone so multiple
+// instances of the same model can co-exist in the scene.
+function CharacterModel({ name, opacity = 1 }: { name: string; opacity?: number }) {
+  const { scene } = useGLTF(CHAR_MODELS[charIndex(name)])
+  const clone = useMemo(() => {
+    const c = scene.clone(true)
+    if (opacity < 1) {
+      c.traverse(obj => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mesh = obj as THREE.Mesh
+          const mat  = (mesh.material as THREE.Material).clone() as THREE.MeshStandardMaterial
+          mat.transparent = true
+          mat.opacity = opacity
+          mesh.material = mat
+        }
+      })
+    }
+    return c
+  }, [scene, opacity])
+  // Model is 1.7 units tall, feet at Y=0 — matches capsule height exactly
+  return <primitive object={clone} scale={[1, 1, 1]} />
+}
 
 // ── Grid renderer (InstancedMesh per floor) ───────────────────────────────────
 
@@ -256,19 +296,15 @@ function Workstation({
   const emissive = isComplete ? '#4ade80' : hasMyTask ? '#f59e0b' : '#1a1a2e'
   const emInt    = isHolding ? 2.2 : hasMyTask ? 0.6 : 0.08
 
+  const { scene: deskScene } = useGLTF('/models/Office_Desk_1.glb')
+  const deskClone = useMemo(() => deskScene.clone(true), [deskScene])
+
   return (
     <group position={[station.x, floorY, station.z]}>
-      <mesh position={[0, 0.44, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.7, 0.09, 0.85]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emInt} />
-      </mesh>
-      {([[-0.75, -0.32], [0.75, -0.32], [-0.75, 0.32], [0.75, 0.32]] as [number, number][]).map(([lx, lz], i) => (
-        <mesh key={i} position={[lx, 0.2, lz]}>
-          <boxGeometry args={[0.08, 0.4, 0.08]} />
-          <meshStandardMaterial color="#2a2840" />
-        </mesh>
-      ))}
-      <mesh position={[0, 0.72, -0.28]}>
+      {/* 3D desk model — scale 0.009 (cm→game units, ~0.85 high × 1.33 wide) */}
+      <primitive object={deskClone} scale={[0.009, 0.009, 0.009]} />
+      {/* Monitor screen on top */}
+      <mesh position={[0, 0.95, -0.28]}>
         <boxGeometry args={[0.68, 0.44, 0.04]} />
         <meshStandardMaterial color="#0f0f23" emissive={emissive} emissiveIntensity={emInt * 0.4} />
       </mesh>
@@ -336,21 +372,17 @@ function PlayerMesh({
     }
   })
 
-  const color = isLocal ? '#6D28D9' : '#3b82f6'
+  const color = isLocal ? '#6D28D9' : isBot ? '#f59e0b' : '#3b82f6'
 
   return (
     <group ref={groupRef} position={[x, floorY, z]}>
-      <mesh position={[0, 0.85, 0]} castShadow>
-        <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
-        <meshStandardMaterial color={color} transparent opacity={isEliminated ? 0.35 : 1} />
-      </mesh>
-      <mesh position={[0, 1.6, 0]} castShadow>
-        <sphereGeometry args={[0.2, 8, 8]} />
-        <meshStandardMaterial color={color} transparent opacity={isEliminated ? 0.35 : 1} />
-      </mesh>
-      <mesh position={[0, 1.25, 0.3]}>
-        <sphereGeometry args={[0.07, 6, 6]} />
-        <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
+      {/* Voxel character model */}
+      <CharacterModel name={name ?? ''} opacity={isEliminated ? 0.35 : 1} />
+      {/* Colour-coded floor ring: purple = local, amber = bot, blue = human */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.32, 0.48, 24]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.2}
+          transparent opacity={isEliminated ? 0.2 : 0.8} />
       </mesh>
       {/* Floating name tag — always faces the camera */}
       {name && (
@@ -505,6 +537,10 @@ function LocalPlayerController({
   const groupRef  = useRef<THREE.Group>(null)
   const prevZone  = useRef<string | null>(null)
   const prevSwitch = useRef<string | null>(null)
+  const localName  = useGameRoom(s => {
+    const sid = s.room?.sessionId
+    return s.players.find(p => p.sessionId === sid)?.name ?? ''
+  })
 
   useFrame((_, delta) => {
     const k   = keys.current
@@ -617,18 +653,10 @@ function LocalPlayerController({
   const color = '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
-      {/* Player body */}
-      <mesh position={[0, 0.85, 0]} castShadow>
-        <capsuleGeometry args={[0.28, 0.8, 4, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0, 1.6, 0]} castShadow>
-        <sphereGeometry args={[0.2, 8, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0, 1.25, 0.3]}>
-        <sphereGeometry args={[0.07, 6, 6]} />
-        <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
+      <CharacterModel name={localName} />
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.32, 0.48, 24]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.4} transparent opacity={0.85} />
       </mesh>
       {/* Local player follow light */}
       <pointLight position={[0, 2.2, 0]} intensity={1.8} distance={10} decay={2} color="#fff5e0" />
@@ -907,17 +935,19 @@ export default function GameWorld({
       camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
       style={{ position: 'fixed', inset: 0, zIndex: 0 }}
     >
-      <Scene
-        onNearStation={onNearStation ?? (() => {})}
-        onNearBody={onNearBody ?? (() => {})}
-        onZoneChange={onZoneChange ?? (() => {})}
-        gameOver={gameOver}
-        spectate={spectate}
-        spectateTarget={spectateTarget}
-        meetingActive={meetingActive}
-        speechBubbles={speechBubbles}
-        voteIndicators={voteIndicators}
-      />
+      <Suspense fallback={null}>
+        <Scene
+          onNearStation={onNearStation ?? (() => {})}
+          onNearBody={onNearBody ?? (() => {})}
+          onZoneChange={onZoneChange ?? (() => {})}
+          gameOver={gameOver}
+          spectate={spectate}
+          spectateTarget={spectateTarget}
+          meetingActive={meetingActive}
+          speechBubbles={speechBubbles}
+          voteIndicators={voteIndicators}
+        />
+      </Suspense>
     </Canvas>
   )
 }
