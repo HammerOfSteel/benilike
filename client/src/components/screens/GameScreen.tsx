@@ -43,6 +43,7 @@ export default function GameScreen({ onNavigate }: Props) {
 
   const [nearStation,  setNearStation]  = useState<StationInfo | null>(null)
   const [nearBody,     setNearBody]     = useState<BodyInfo | null>(null)
+  const [nearKillTarget, setNearKillTarget] = useState<{ sessionId: string; name: string } | null>(null)
   const [currentZone,  setCurrentZone]  = useState<string | null>(null)
   const [flickerOn,    setFlickerOn]    = useState(false)
   const toastRaf = useRef<number>(0)
@@ -106,6 +107,7 @@ export default function GameScreen({ onNavigate }: Props) {
 
   const handleNearStation  = useCallback((st: StationInfo | null) => setNearStation(st), [])
   const handleNearBody     = useCallback((b: BodyInfo | null)    => setNearBody(b), [])
+  const handleNearKillTarget = useCallback((t: { sessionId: string; name: string } | null) => setNearKillTarget(t), [])
   const handleZoneChange   = useCallback((z: string | null)      => setCurrentZone(z), [])
 
   // Clear expired toasts
@@ -176,6 +178,7 @@ export default function GameScreen({ onNavigate }: Props) {
       <GameWorld
         onNearStation={handleNearStation}
         onNearBody={handleNearBody}
+        onNearKillTarget={handleNearKillTarget}
         onZoneChange={handleZoneChange}
         gameOver={false}
       />
@@ -261,6 +264,13 @@ export default function GameScreen({ onNavigate }: Props) {
       {nearBody && !nearStation && (
         <div className={styles.hudInteract} style={{ color: '#ef4444' }}>
           [E] Report body — {nearBody.name}
+        </div>
+      )}
+
+      {/* ── Kill prompt (Rogue AI only, phase 1 complete) ── */}
+      {nearKillTarget && myIsAi && !nearStation && !nearBody && (
+        <div className={styles.hudInteract} style={{ color: '#ff2222', fontWeight: 700 }}>
+          [E] ELIMINATE — {nearKillTarget.name}
         </div>
       )}
 

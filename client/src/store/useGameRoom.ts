@@ -39,6 +39,7 @@ interface GameRoomStore {
   myRole:             PlayerRole | null
   myAssignedTasks:    TaskId[]
   myIsAi:             boolean
+  myCoverTasks:       TaskId[]   // original role tasks — never change between sprints
   aiPhase:            number
   aiPhaseTasks:       TaskId[]
   players:            LobbyPlayer[]
@@ -87,6 +88,7 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   myRole:           null,
   myAssignedTasks:  [],
   myIsAi:           false,
+  myCoverTasks:     [],
   aiPhase:          0,
   aiPhaseTasks:     [],
   players:          [],
@@ -108,14 +110,25 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   aiRevealedTasks:  [],
 
   setRoom:          (room) => set({ room }),
-  setRole:          (myRole, myAssignedTasks) => set({ myRole, myAssignedTasks }),
-  setAiBriefing:    (aiPhase, aiPhaseTasks) => set(s => ({
-    myIsAi:         true,
-    aiPhase,
-    aiPhaseTasks:   [...s.aiPhaseTasks, ...aiPhaseTasks],
-    // Merge into myAssignedTasks so HUD, minimap, and workstation rings show AI tasks
-    myAssignedTasks: [...new Set([...s.myAssignedTasks, ...aiPhaseTasks])],
-  })),
+  setRole:          (myRole, myAssignedTasks) => set({ myRole, myAssignedTasks, myCoverTasks: myAssignedTasks }),
+  setAiBriefing:    (aiPhase, aiPhaseTasks) => set(s => {
+    if (aiPhase === 1) {
+      // Sprint reset: rebuild from cover tasks + fresh phase-1 tasks only
+      return {
+        myIsAi:         true,
+        aiPhase,
+        aiPhaseTasks:   aiPhaseTasks,
+        myAssignedTasks: [...new Set([...s.myCoverTasks, ...aiPhaseTasks])],
+      }
+    }
+    // Phase advancement: accumulate new phase tasks
+    return {
+      myIsAi:          true,
+      aiPhase,
+      aiPhaseTasks:    [...s.aiPhaseTasks, ...aiPhaseTasks],
+      myAssignedTasks: [...new Set([...s.myAssignedTasks, ...aiPhaseTasks])],
+    }
+  }),
   setPlayers:       (players) => set({ players }),
   addIncident:      (text, type = 'info', time) => set(s => ({
     incidents: [...s.incidents.slice(-49), {
@@ -147,7 +160,7 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
     console.log('[BENI:store] clearRoom() called — isSpectator → false')
     set({
       room: null, myRole: null, myAssignedTasks: [], myIsAi: false,
-      aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
+      myCoverTasks: [], aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
       stations: [], completedTasks: new Set(), holdingStationId: null,
       holdStartedAt: 0, toasts: [], bodies: [], sprint: null, retroData: null,
       isSpectator: false, spectateTarget: null, aiRevealedId: null, aiRevealedTasks: [],

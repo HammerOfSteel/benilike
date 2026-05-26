@@ -143,6 +143,7 @@ export class GameRoom extends Room<GameState> {
   private assignedTasks   = new Map<string, TaskId[]>() // sessionId → assigned task ids
   private sprintPlayerDone = new Map<string, number>()  // sessionId → tasks completed this sprint
   private allHandsTimeout: ReturnType<typeof this.clock.setTimeout> | null = null
+  private killCooldowns   = new Map<string, number>()  // sessionId → last-kill timestamp
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -369,6 +370,57 @@ export class GameRoom extends Room<GameState> {
     // ── Task hold cancel ───────────────────────────────────────────────────────
     this.onMessage('task_hold_cancel', (client: Client) => {
       this.holdState.delete(client.sessionId)
+    })
+
+    // ── Kill (Rogue AI only, after phase 1 complete) ───────────────────────────
+    this.onMessage('kill', (client: Client, data: { targetId: string }) => {
+      try {
+        if (this.state.phase !== 'game') return
+        if (client.sessionId !== this.aiSessionId) return
+
+        const killer = this.state.players.get(client.sessionId)
+        if (!killer || killer.isEliminated) return
+
+        // Require all phase-1 AI tasks completed
+        const phase1Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 1).map(t => t.id)
+        if (!phase1Tasks.every(t => this.aiPhaseCompleted.has(t))) return
+
+        // 30-second kill cooldown
+        const lastKill = this.killCooldowns.get(client.sessionId) ?? 0
+        if (Date.now() - lastKill < 30_000) {
+          client.send('incident', { message: 'Kill not ready — wait 30 s.', severity: 'warn', time: new Date().toISOString() })
+          return
+        }
+
+        const target = this.state.players.get(data.targetId)
+        if (!target || target.isEliminated || target.isSpectator) return
+
+        // Proximity check
+        const dx = killer.x - target.x, dz = killer.z - target.z
+        if (Math.sqrt(dx * dx + dz * dz) > INTERACT_R * 2) return
+
+        // Eliminate target and create body
+        target.isEliminated = true
+        const body = new Body()
+        body.bodyId = target.sessionId
+        body.name   = target.name
+        body.x      = target.x
+        body.z      = target.z
+        body.floor  = target.floor
+        this.state.bodies.set(body.bodyId, body)
+
+        this.killCooldowns.set(client.sessionId, Date.now())
+        this.broadcast('body_appeared', {
+          body: { bodyId: body.bodyId, name: body.name, x: body.x, z: body.z, floor: body.floor },
+        })
+
+        // Tell the AI player the kill cooldown so they know when they can kill again
+        client.send('incident', { message: `${target.name} neutralised. Next kill available in 30 s.`, severity: 'success', time: new Date().toISOString() })
+
+        this.checkWinConditions()
+      } catch (err) {
+        console.error('[GameRoom] kill error:', err)
+      }
     })
 
     // ── Report body ────────────────────────────────────────────────────────────
@@ -655,6 +707,25 @@ export class GameRoom extends Room<GameState> {
           st.completedBy = null
         }
         this.state.completedTasks.clear()
+
+        // Clear any bodies left over from the previous sprint
+        this.state.bodies.clear()
+        this.killCooldowns.clear()
+
+        // Reset Rogue AI sabotage phase so the 3 phase-1 tasks must be done again
+        if (this.aiSessionId) {
+          this.aiPhase = 1
+          this.aiPhaseCompleted.clear()
+
+          // Trim assignedTasks back to cover tasks + phase-1 AI tasks
+          const allAssigned = this.assignedTasks.get(this.aiSessionId) ?? []
+          const phase1Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 1).map(t => t.id)
+          const coverTasks  = allAssigned.filter(tid => !AI_TASK_DEFS.some(ai => ai.id === tid))
+          this.assignedTasks.set(this.aiSessionId, [...coverTasks, ...phase1Tasks])
+
+          const aiClient = this.clients.find(c => c.sessionId === this.aiSessionId)
+          aiClient?.send('ai_briefing', { phase: 1 as AiPhase, phaseTasks: phase1Tasks })
+        }
       }
 
       const livingWorkers = Array.from(this.state.players.values()).filter(p => !p.isEliminated).length
@@ -764,12 +835,30 @@ export class GameRoom extends Room<GameState> {
       // Schedule bot meeting chat
       this.scheduleBotMeetingChat()
 
-      // 60-second auto-resolve — matches the client countdown timer
+      // 60-second auto-resolve — after timer, force remaining bot votes, then give
+      // the human player a 15-second grace window before resolving without their vote
       if (this.allHandsTimeout) this.allHandsTimeout.clear()
       this.allHandsTimeout = this.clock.setTimeout(() => {
-        if (this.state.phase === 'meeting') {
-          this.scheduleBotVotes(0)  // immediate votes for any who haven't yet
-          this.clock.setTimeout(() => this.resolveVote(), 3000)
+        if (this.state.phase !== 'meeting') return
+        this.scheduleBotVotes(0)  // force any bots that haven’t voted yet
+        // Check whether the human player has already voted
+        const humanVoted = this.clients.some(c => {
+          const p = this.state.players.get(c.sessionId)
+          return p && !p.isBot && !p.isEliminated && !p.isSpectator && this.votes.has(c.sessionId)
+        })
+        if (humanVoted) {
+          this.clock.setTimeout(() => this.resolveVote(), 2000)
+        } else {
+          // Nudge the human and give them 15 more seconds
+          for (const c of this.clients) {
+            const p = this.state.players.get(c.sessionId)
+            if (p && !p.isBot && !p.isEliminated && !p.isSpectator) {
+              c.send('incident', { message: 'Time’s up — vote now! 15 seconds remaining.', severity: 'warn', time: new Date().toISOString() })
+            }
+          }
+          this.allHandsTimeout = this.clock.setTimeout(() => {
+            if (this.state.phase === 'meeting') this.resolveVote()
+          }, 15_000)
         }
       }, 60_000)
     } catch (err) {
@@ -1033,11 +1122,8 @@ export class GameRoom extends Room<GameState> {
         }
       }
 
-      // Check if all living players have voted
-      const livingPlayers = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
-      if (this.votes.size >= livingPlayers.length) {
-        this.clock.setTimeout(() => this.resolveVote(), 1500)
-      }
+      // Bots don't trigger early resolution — only the human's vote does
+      // (prevents meeting ending before the human has a chance to see the UI)
     } catch (err) {
       console.error(`[GameRoom.castBotVote] Error (${sessionId}):`, err)
     }

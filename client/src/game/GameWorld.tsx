@@ -756,10 +756,15 @@ const _meetDesired = new THREE.Vector3()
 
 function MeetingCamera({ center }: { center: { x: number; z: number } }) {
   const { camera } = useThree()
+  // Snap immediately on mount so there is no jarring fly-through
+  useEffect(() => {
+    camera.position.set(center.x, 15, center.z + 13)
+    camera.lookAt(center.x, 0.5, center.z)
+  }, [camera, center])
   useFrame(() => {
     _meetDesired.set(center.x, 15, center.z + 13)
     _meetLook.set(center.x, 0.5, center.z)
-    camera.position.lerp(_meetDesired, 0.06)
+    camera.position.lerp(_meetDesired, 0.12)
     camera.lookAt(_meetLook)
   })
   return null
@@ -830,17 +835,21 @@ function SpectatorFollowCamera({ targetId }: { targetId: string }) {
 // ── Local Player Controller ───────────────────────────────────────────────────
 function LocalPlayerController({
   mapData, switchPositions, onNearStation, onNearSwitch, onZoneChange, onNearBody,
+  meetingActive, onNearKillTarget,
 }: {
   mapData: MapData | null
   switchPositions: SwitchPos[]
-  onNearStation: (st: StationInfo | null) => void
-  onNearSwitch:  (zone: string | null) => void
-  onZoneChange:  (zone: string | null) => void
-  onNearBody:    (body: BodyInfo | null) => void
+  onNearStation:     (st: StationInfo | null) => void
+  onNearSwitch:      (zone: string | null) => void
+  onZoneChange:      (zone: string | null) => void
+  onNearBody:        (body: BodyInfo | null) => void
+  meetingActive:     boolean
+  onNearKillTarget:  (target: { sessionId: string; name: string } | null) => void
 }) {
   const keys       = useKeyboard()
   const facingRef   = useRef(0)
   const lastSent    = useRef(0)
+  const lastKillSent = useRef(0)
   const lastToggle  = useRef(0); void lastToggle
   const groupRef    = useRef<THREE.Group>(null)
   const movingRef   = useRef(false)
@@ -876,6 +885,19 @@ function LocalPlayerController({
 
   useFrame((_, delta) => {
     const k   = keys.current
+    const gs  = useGameRoom.getState()
+
+    // ── Freeze movement and interactions during meeting ──────────────────────
+    if (meetingActive) {
+      // Keep the group at its current position (meeting circle placement handled by Scene)
+      if (groupRef.current) {
+        groupRef.current.position.set(localPos.x, localFloor * FLOOR_HEIGHT, localPos.z)
+      }
+      onNearStation(null)
+      onNearBody(null)
+      onNearKillTarget(null)
+      return
+    }
 
     let dx = 0, dz = 0
     if (k['KeyW'] || k['ArrowUp'])    dz -= 1
@@ -934,7 +956,6 @@ function LocalPlayerController({
     if (zone !== prevZone.current) { prevZone.current = zone; onZoneChange(zone) }
 
     // Station proximity
-    const gs = useGameRoom.getState()
     const nearStation = gs.stations.find(st => {
       if ((st.floor ?? 0) !== localFloor) return false
       if (!st.taskId) return false
@@ -980,6 +1001,26 @@ function LocalPlayerController({
       gs.room?.send('task_hold_cancel', {})
     }
 
+    // ── Kill proximity (Rogue AI only, unlocks when aiPhase >= 2) ────────────
+    const mySessionId = gs.room?.sessionId
+    const canKill = gs.myIsAi && gs.aiPhase >= 2
+    const nearKillable = canKill ? (gs.players.find(p => {
+      if (p.sessionId === mySessionId || p.isEliminated || p.isSpectator) return false
+      if ((p.floor ?? 0) !== localFloor) return false
+      const px = localPos.x - p.x, pz = localPos.z - p.z
+      return Math.sqrt(px * px + pz * pz) < INTERACT_R * 2
+    }) ?? null) : null
+    onNearKillTarget(nearKillable ? { sessionId: nearKillable.sessionId, name: nearKillable.name } : null)
+
+    // E key → kill (only when not near a station or body)
+    if (k['KeyE'] && nearKillable && canKill && !nearStation && !nearBodyObj) {
+      const now = Date.now()
+      if (now - lastKillSent.current > 1000) {
+        lastKillSent.current = now
+        gs.room?.send('kill', { targetId: nearKillable.sessionId })
+      }
+    }
+
     // Position broadcast
     const now = performance.now()
     if (now - lastSent.current > SEND_MS) {
@@ -1005,17 +1046,18 @@ function LocalPlayerController({
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function Scene({
   onNearStation, onNearBody, onZoneChange, gameOver, spectate, spectateTarget,
-  meetingActive, speechBubbles, voteIndicators,
+  meetingActive, speechBubbles, voteIndicators, onNearKillTarget,
 }: {
-  onNearStation:  (st: StationInfo | null) => void
-  onNearBody:     (body: BodyInfo | null) => void
-  onZoneChange:   (zone: string | null) => void
-  gameOver:       boolean
-  spectate:       boolean
-  spectateTarget: string | null
-  meetingActive:  boolean
-  speechBubbles:  Record<string, string>
-  voteIndicators: Record<string, string>
+  onNearStation:   (st: StationInfo | null) => void
+  onNearBody:      (body: BodyInfo | null) => void
+  onZoneChange:    (zone: string | null) => void
+  gameOver:        boolean
+  spectate:        boolean
+  spectateTarget:  string | null
+  meetingActive:   boolean
+  speechBubbles:   Record<string, string>
+  voteIndicators:  Record<string, string>
+  onNearKillTarget: (target: { sessionId: string; name: string } | null) => void
 }) {
   const { players, room, stations, completedTasks, holdingStationId } = useGameRoom()
   const myAssignedTasks = useGameRoom(s => s.myAssignedTasks)
@@ -1260,6 +1302,8 @@ function Scene({
           onNearSwitch={setNearSwitch}
           onZoneChange={onZoneChange}
           onNearBody={(b) => { setNearBodyState(b); onNearBody(b) }}
+          meetingActive={meetingActive}
+          onNearKillTarget={onNearKillTarget}
         />
       )}
     </>
@@ -1268,19 +1312,20 @@ function Scene({
 
 // ── GameWorld (exported) ──────────────────────────────────────────────────────
 export interface GameWorldProps {
-  onNearStation?:  (st: StationInfo | null) => void
-  onNearBody?:     (body: BodyInfo | null) => void
-  onZoneChange?:   (zone: string | null) => void
-  gameOver?:       boolean
-  spectate?:       boolean
-  spectateTarget?: string | null
-  meetingActive?:  boolean
-  speechBubbles?:  Record<string, string>
-  voteIndicators?: Record<string, string>
+  onNearStation?:     (st: StationInfo | null) => void
+  onNearBody?:        (body: BodyInfo | null) => void
+  onZoneChange?:      (zone: string | null) => void
+  onNearKillTarget?:  (target: { sessionId: string; name: string } | null) => void
+  gameOver?:          boolean
+  spectate?:          boolean
+  spectateTarget?:    string | null
+  meetingActive?:     boolean
+  speechBubbles?:     Record<string, string>
+  voteIndicators?:    Record<string, string>
 }
 
 export default function GameWorld({
-  onNearStation, onNearBody, onZoneChange,
+  onNearStation, onNearBody, onZoneChange, onNearKillTarget,
   gameOver = false, spectate = false, spectateTarget = null,
   meetingActive = false, speechBubbles = {}, voteIndicators = {},
 }: GameWorldProps) {
@@ -1296,6 +1341,7 @@ export default function GameWorld({
           onNearStation={onNearStation ?? (() => {})}
           onNearBody={onNearBody ?? (() => {})}
           onZoneChange={onZoneChange ?? (() => {})}
+          onNearKillTarget={onNearKillTarget ?? (() => {})}
           gameOver={gameOver}
           spectate={spectate}
           spectateTarget={spectateTarget}
