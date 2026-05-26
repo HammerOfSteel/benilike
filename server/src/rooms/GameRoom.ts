@@ -419,11 +419,12 @@ export class GameRoom extends Room<GameState> {
         body.x      = target.x
         body.z      = target.z
         body.floor  = target.floor
+        body.facing = target.facing
         this.state.bodies.set(body.bodyId, body)
 
         this.killCooldowns.set(client.sessionId, Date.now())
         this.broadcast('body_appeared', {
-          body: { bodyId: body.bodyId, name: body.name, x: body.x, z: body.z, floor: body.floor },
+          body: { bodyId: body.bodyId, name: body.name, x: body.x, z: body.z, floor: body.floor, facing: body.facing },
         })
 
         // Tell the AI player the kill cooldown so they know when they can kill again

@@ -771,17 +771,45 @@ function MeetingCamera({ center }: { center: { x: number; z: number } }) {
 }
 
 // ── Body marker ───────────────────────────────────────────────────────────────
+// ── Dead body: character model laid flat on the ground ──────────────────────
+function DeadBodyMesh({ name }: { name: string }) {
+  const { scene: charScene } = useGLTF(KAYKIT_CHARS[charIndex(name)])
+  const clone = useMemo(() => {
+    const c = SkeletonUtils.clone(charScene) as THREE.Group
+    c.traverse(obj => {
+      if (obj.name.includes('.')) obj.name = obj.name.replace(/\./g, '_')
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        mesh.material = mats.map(m => {
+          const n = (m as THREE.MeshStandardMaterial).clone()
+          n.color.setRGB(0.88, 0.88, 0.92)  // pale blue-white
+          n.emissive.setRGB(0.08, 0.08, 0.12)
+          n.emissiveIntensity = 1
+          n.transparent = true
+          n.opacity = 0.92
+          return n
+        }) as any
+      }
+    })
+    return c
+  }, [charScene])
+  return <primitive object={clone} />
+}
+
 function BodyMarker({ body, floorY, isNear }: { body: BodyInfo; floorY: number; isNear: boolean }) {
   return (
-    <group position={[body.x, floorY + 0.06, body.z]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.55, 24]} />
-        <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={isNear ? 2 : 0.7} transparent opacity={0.85} />
-      </mesh>
+    // Raise group by ~0.3 so the character's depth clears the floor when rotated
+    <group position={[body.x, floorY + 0.3, body.z]}>
+      {/* Rotate -90° on X to lay the character flat, then rotate Y to match facing */}
+      <group rotation={[-Math.PI / 2, body.facing ?? 0, 0]}>
+        <DeadBodyMesh name={body.name} />
+      </group>
+      {/* Highlight ring when player is close enough to report */}
       {isNear && (
-        <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.65, 0.85, 24]} />
-          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={3} transparent opacity={0.6} />
+        <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.7, 0.9, 32]} />
+          <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={2.5} transparent opacity={0.75} />
         </mesh>
       )}
     </group>
@@ -850,6 +878,8 @@ function LocalPlayerController({
   const facingRef   = useRef(0)
   const lastSent    = useRef(0)
   const lastKillSent = useRef(0)
+  const lastReportSent = useRef(0)
+  const eWasUp    = useRef(true)   // tracks that E was released between actions
   const lastToggle  = useRef(0); void lastToggle
   const groupRef    = useRef<THREE.Group>(null)
   const movingRef   = useRef(false)
@@ -981,12 +1011,20 @@ function LocalPlayerController({
     }) ?? null
     onNearBody(nearBodyObj)
 
+    // Track E release so body-report can't fire on the same press as a kill
+    if (!k['KeyE']) eWasUp.current = true
+
     // Hold-E for workstation or body report
     const wantsHold   = nearStation && !!k['KeyE']
     const currentHold = gs.holdingStationId
-    if (!nearStation && nearBodyObj && k['KeyE']) {
-      // Report body
-      gs.room?.send('report_body', { bodyId: nearBodyObj.bodyId })
+    if (!nearStation && nearBodyObj && k['KeyE'] && eWasUp.current) {
+      // Require a deliberate fresh press — debounce 800 ms
+      const now2 = Date.now()
+      if (now2 - lastReportSent.current > 800) {
+        lastReportSent.current = now2
+        eWasUp.current = false
+        gs.room?.send('report_body', { bodyId: nearBodyObj.bodyId })
+      }
     } else if (wantsHold && nearStation) {
       const td = nearStation.taskId ? [...TASK_DEFS, ...AI_TASK_DEFS].find(t => t.id === nearStation.taskId) : null
       const playerTasks = gs.myAssignedTasks ?? []
@@ -1017,6 +1055,7 @@ function LocalPlayerController({
       const now = Date.now()
       if (now - lastKillSent.current > 1000) {
         lastKillSent.current = now
+        eWasUp.current = false   // consume E press so body-report can't fire
         gs.room?.send('kill', { targetId: nearKillable.sessionId })
       }
     }
@@ -1166,7 +1205,7 @@ function Scene({
       )
       // Sync bodies from server schema
       const bodyList = Array.from((state.bodies as Map<string, any>).values()).map((b: any) => ({
-        bodyId: b.bodyId, name: b.name, x: b.x, z: b.z, floor: b.floor,
+        bodyId: b.bodyId, name: b.name, x: b.x, z: b.z, floor: b.floor, facing: b.facing ?? 0,
       }))
       for (const body of bodyList) gs.addBody(body)
     })

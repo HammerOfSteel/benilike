@@ -20,6 +20,7 @@ export class Body extends Schema {
   @type('number') x      = 0
   @type('number') z      = 0
   @type('number') floor  = 0
+  @type('number') facing = 0
 }
 
 export class GameState extends Schema {

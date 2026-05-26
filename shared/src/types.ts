@@ -65,6 +65,7 @@ export interface BodyInfo {
   z:      number
   floor:  number
   name:   string
+  facing: number
 }
 
 export interface SprintInfo {
