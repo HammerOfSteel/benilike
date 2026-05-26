@@ -1,7 +1,8 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard, useGLTF } from '@react-three/drei'
+import { OrbitControls, Text, Billboard, useGLTF, useAnimations } from '@react-three/drei'
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from 'react'
 import * as THREE from 'three'
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { useGameRoom } from '../store/useGameRoom'
 import { useKeyboard } from './useKeyboard'
 import { TASK_DEFS, AI_TASK_DEFS } from '@shared/tasks'
@@ -20,15 +21,20 @@ const localPos   = new THREE.Vector3(0, 0, 0)
 let   localFloor = 0
 let   lastStair  = 0
 
-// ── 3D asset models ───────────────────────────────────────────────────────────
-const CHAR_MODELS = [
-  '/models/Char01.glb',
-  '/models/Char02.glb',
-  '/models/Char03.glb',
-  '/models/Char04.glb',
-  '/models/Char05.glb',
+// ── KayKit animated character models ─────────────────────────────────────────
+const KAYKIT_CHARS = [
+  '/models/kaykit/Barbarian.glb',
+  '/models/kaykit/Knight.glb',
+  '/models/kaykit/Mage.glb',
+  '/models/kaykit/Ranger.glb',
+  '/models/kaykit/Rogue.glb',
+  '/models/kaykit/Rogue_Hooded.glb',
 ]
-CHAR_MODELS.forEach(p => useGLTF.preload(p))
+const ANIM_MOVEMENT = '/models/kaykit/Rig_Medium_MovementBasic.glb'
+const ANIM_GENERAL  = '/models/kaykit/Rig_Medium_General.glb'
+KAYKIT_CHARS.forEach(p => useGLTF.preload(p))
+useGLTF.preload(ANIM_MOVEMENT)
+useGLTF.preload(ANIM_GENERAL)
 useGLTF.preload('/models/Office_Desk_1.glb')
 useGLTF.preload('/models/Chair_A.glb')
 useGLTF.preload('/models/Computer_Monitor.glb')
@@ -37,35 +43,66 @@ useGLTF.preload('/models/Bookshelf.glb')
 function charIndex(name: string): number {
   let h = 0
   for (const c of name) h = (Math.imul(31, h) + c.charCodeAt(0)) | 0
-  return Math.abs(h) % CHAR_MODELS.length
+  return Math.abs(h) % KAYKIT_CHARS.length
 }
 
-// Renders a voxel character GLB; each caller gets its own clone so multiple
-// instances of the same model can co-exist in the scene.
-function CharacterModel({ name, opacity = 1 }: { name: string; opacity?: number }) {
-  const { scene } = useGLTF(CHAR_MODELS[charIndex(name)])
+// KayKit animated character: loads character GLB + retargets animation rig clips
+// movingRef drives the idle↔walk transition without triggering React re-renders
+function KayKitCharacter({
+  name, opacity = 1, movingRef,
+}: {
+  name: string
+  opacity?: number
+  movingRef: React.MutableRefObject<boolean>
+}) {
+  const meshRef     = useRef<THREE.Group>(null)
+  const currentAnim = useRef('')
+
+  const { scene: charScene }           = useGLTF(KAYKIT_CHARS[charIndex(name)])
+  const { animations: moveAnims }      = useGLTF(ANIM_MOVEMENT)
+  const { animations: genAnims  }      = useGLTF(ANIM_GENERAL)
+
+  // SkeletonUtils.clone keeps the skinned mesh and bones independent per instance
   const clone = useMemo(() => {
-    const c = scene.clone(true)
+    const c = SkeletonUtils.clone(charScene) as THREE.Group
     if (opacity < 1) {
       c.traverse(obj => {
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh
-          const mat  = (mesh.material as THREE.Material).clone() as THREE.MeshStandardMaterial
-          mat.transparent = true
-          mat.opacity = opacity
-          mesh.material = mat
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+          mesh.material = mats.map(m => {
+            const n = (m as THREE.Material).clone() as THREE.MeshStandardMaterial
+            n.transparent = true; n.opacity = opacity
+            return n
+          }) as any
         }
       })
     }
     return c
-  }, [scene, opacity])
-  // Model is 1.7 units tall, feet at Y=0.
-  // Rotation offset: model faces -X by default; +π/2 maps its -X to world +Z (forward)
-  return (
-    <group rotation={[0, Math.PI / 2, 0]}>
-      <primitive object={clone} scale={[1, 1, 1]} />
-    </group>
-  )
+  }, [charScene, opacity])
+
+  const { actions, mixer } = useAnimations([...moveAnims, ...genAnims], meshRef)
+
+  // Start idle once actions are available
+  useEffect(() => {
+    if (!actions['Idle_A']) return
+    actions['Idle_A'].reset().play()
+    currentAnim.current = 'Idle_A'
+  }, [actions])
+
+  useFrame((_, delta) => {
+    mixer?.update(delta)
+    // Transition between walk and idle based on movement ref (no React re-render)
+    const target = movingRef.current ? 'Walking_A' : 'Idle_A'
+    if (target !== currentAnim.current && actions[target] && actions[currentAnim.current]) {
+      actions[currentAnim.current]!.fadeOut(0.15)
+      actions[target]!.reset().fadeIn(0.15).play()
+      currentAnim.current = target
+    }
+  })
+
+  // KayKit characters face +Z at rest — matches our atan2(dx,dz) convention
+  return <primitive ref={meshRef} object={clone} />
 }
 
 // ── Grid renderer (InstancedMesh per floor) ───────────────────────────────────
@@ -73,9 +110,9 @@ function CharacterModel({ name, opacity = 1 }: { name: string; opacity?: number 
 const _m4 = new THREE.Matrix4()
 
 function GridLayer({
-  grid, gridW, gridH, floorY,
+  grid, gridW, gridH, floorY, spectate,
 }: {
-  grid: Map<string, 0 | 1>; gridW: number; gridH: number; floorY: number
+  grid: Map<string, 0 | 1>; gridW: number; gridH: number; floorY: number; spectate?: boolean
 }) {
   const wallRef  = useRef<THREE.InstancedMesh>(null)
   const floorRef = useRef<THREE.InstancedMesh>(null)
@@ -111,7 +148,8 @@ function GridLayer({
     <group>
       <instancedMesh ref={wallRef} args={[undefined, undefined, wallMats.length]} castShadow receiveShadow>
         <boxGeometry args={[CELL_SIZE, WALL_HEIGHT, CELL_SIZE]} />
-        <meshStandardMaterial color="#5c4f8a" roughness={0.9} />
+        <meshStandardMaterial color="#5c4f8a" roughness={0.9}
+          transparent={spectate} opacity={spectate ? 0.18 : 1} depthWrite={!spectate} />
       </instancedMesh>
       <instancedMesh ref={floorRef} args={[undefined, undefined, floorMats.length]} receiveShadow>
         <boxGeometry args={[CELL_SIZE, 0.12, CELL_SIZE]} />
@@ -188,16 +226,7 @@ function RoomCeilingLights({ mapData, floor, lights }: {
         })
         return (
           <group key={i} position={[room.wcx, ceilY, room.wcz]}>
-            {/* Housing panel — emissive in zone colour when on */}
-            <mesh>
-              <boxGeometry args={[Math.min(rw - 0.5, numTubes * 3.0 + 0.8), 0.08, tubeLen + 0.6]} />
-              <meshStandardMaterial
-                color={isOn ? lcolor : '#1a1a28'}
-                emissive={isOn ? lcolor : '#000'}
-                emissiveIntensity={isOn ? 1.0 : 0}
-              />
-            </mesh>
-            {/* Bright white fluorescent tubes inside housing */}
+            {/* Bright white fluorescent tubes — no housing panel (avoids opaque box from spectator view) */}
             {tubes.map((tx, ti) => (
               <mesh key={ti} position={[tx, -0.03, 0]}>
                 <boxGeometry args={[0.10, 0.04, tubeLen * 0.9]} />
@@ -440,37 +469,29 @@ function PlayerMesh({
   speechBubble?: string
   voteIndicator?: string   // e.g. "→ Dave" or "⏭ skip"
 }) {
-  const groupRef     = useRef<THREE.Group>(null)
-  const modelRef     = useRef<THREE.Group>(null)
-  const walkPhase    = useRef(0)
-  const prevX        = useRef(x)
-  const prevZ        = useRef(z)
-  const floorY       = pFloor * FLOOR_HEIGHT
+  const groupRef  = useRef<THREE.Group>(null)
+  const movingRef = useRef(false)
+  const prevX     = useRef(x)
+  const prevZ     = useRef(z)
+  const floorY    = pFloor * FLOOR_HEIGHT
 
-  useFrame((_, delta) => {
+  useFrame(() => {
     if (groupRef.current) {
       _v3.set(x, floorY, z)
       groupRef.current.position.lerp(_v3, 0.25)
       groupRef.current.rotation.y = facing
     }
-    // Procedural walk bob
-    const moved = Math.hypot(x - prevX.current, z - prevZ.current)
-    if (moved > 0.015) walkPhase.current += delta * 10
+    movingRef.current = Math.hypot(x - prevX.current, z - prevZ.current) > 0.015
     prevX.current = x
     prevZ.current = z
-    if (modelRef.current) {
-      modelRef.current.position.y = Math.abs(Math.sin(walkPhase.current)) * 0.07
-    }
   })
 
   const color = isLocal ? '#6D28D9' : isBot ? '#f59e0b' : '#3b82f6'
 
   return (
     <group ref={groupRef} position={[x, floorY, z]}>
-      {/* Voxel character model with walk bob */}
-      <group ref={modelRef}>
-        <CharacterModel name={name ?? ''} opacity={isEliminated ? 0.35 : 1} />
-      </group>
+      {/* Animated KayKit character */}
+      <KayKitCharacter name={name ?? ''} opacity={isEliminated ? 0.35 : 1} movingRef={movingRef} />
       {/* Colour-coded floor ring: purple = local, amber = bot, blue = human */}
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.32, 0.48, 24]} />
@@ -623,14 +644,12 @@ function LocalPlayerController({
   onZoneChange:  (zone: string | null) => void
   onNearBody:    (body: BodyInfo | null) => void
 }) {
-  const keys        = useKeyboard()
+  const keys       = useKeyboard()
   const facingRef   = useRef(0)
   const lastSent    = useRef(0)
   const lastToggle  = useRef(0); void lastToggle
   const groupRef    = useRef<THREE.Group>(null)
-  const modelRef    = useRef<THREE.Group>(null)
-  const walkPhase   = useRef(0)
-  const isMovingRef = useRef(false)
+  const movingRef   = useRef(false)
   const prevZone    = useRef<string | null>(null)
   const prevSwitch  = useRef<string | null>(null)
   const localName  = useGameRoom(s => {
@@ -646,7 +665,7 @@ function LocalPlayerController({
     if (k['KeyA'] || k['ArrowLeft'])  dx -= 1
     if (k['KeyD'] || k['ArrowRight']) dx += 1
 
-    isMovingRef.current = (dx !== 0 || dz !== 0)
+    movingRef.current = (dx !== 0 || dz !== 0)
     if (dx !== 0 || dz !== 0) {
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
@@ -668,11 +687,6 @@ function LocalPlayerController({
     if (groupRef.current) {
       groupRef.current.position.set(localPos.x, localFloor * FLOOR_HEIGHT, localPos.z)
       groupRef.current.rotation.y = facingRef.current
-    }
-    // Walk bob
-    if (isMovingRef.current) walkPhase.current += delta * 10
-    if (modelRef.current) {
-      modelRef.current.position.y = Math.abs(Math.sin(walkPhase.current)) * 0.07
     }
 
     // Staircase transitions
@@ -755,9 +769,7 @@ function LocalPlayerController({
   const color = '#6D28D9'
   return (
     <group ref={groupRef} position={[localPos.x, 0, localPos.z]}>
-      <group ref={modelRef}>
-        <CharacterModel name={localName} />
-      </group>
+      <KayKitCharacter name={localName} movingRef={movingRef} />
       <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.32, 0.48, 24]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.4} transparent opacity={0.85} />
@@ -950,6 +962,7 @@ function Scene({
             gridW={mapData.gridW}
             gridH={mapData.gridH}
             floorY={floorY}
+            spectate={spectate}
           />
           <ZoneOverlays     mapData={mapData} floor={renderFloor} />
           <RoomCeilingLights mapData={mapData} floor={renderFloor} lights={roomLights} />
