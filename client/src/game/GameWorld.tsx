@@ -60,9 +60,9 @@ function CharacterModel({ name, opacity = 1 }: { name: string; opacity?: number 
     return c
   }, [scene, opacity])
   // Model is 1.7 units tall, feet at Y=0.
-  // Rotation offset: voxel OBJ is exported facing +X; rotate -90° around Y so forward = +Z (matches atan2 convention)
+  // Rotation offset: model faces -X by default; +π/2 maps its -X to world +Z (forward)
   return (
-    <group rotation={[0, -Math.PI / 2, 0]}>
+    <group rotation={[0, Math.PI / 2, 0]}>
       <primitive object={clone} scale={[1, 1, 1]} />
     </group>
   )
@@ -188,29 +188,33 @@ function RoomCeilingLights({ mapData, floor, lights }: {
         })
         return (
           <group key={i} position={[room.wcx, ceilY, room.wcz]}>
-            {/* Ceiling housing panel */}
+            {/* Housing panel — emissive in zone colour when on */}
             <mesh>
-              <boxGeometry args={[Math.min(rw - 0.5, numTubes * 3.0 + 0.6), 0.06, tubeLen + 0.4]} />
-              <meshStandardMaterial color={isOn ? '#2a2a3a' : '#1a1a28'} roughness={0.95} />
+              <boxGeometry args={[Math.min(rw - 0.5, numTubes * 3.0 + 0.8), 0.08, tubeLen + 0.6]} />
+              <meshStandardMaterial
+                color={isOn ? lcolor : '#1a1a28'}
+                emissive={isOn ? lcolor : '#000'}
+                emissiveIntensity={isOn ? 1.0 : 0}
+              />
             </mesh>
-            {/* Individual fluorescent tubes */}
+            {/* Bright white fluorescent tubes inside housing */}
             {tubes.map((tx, ti) => (
-              <mesh key={ti} position={[tx, -0.02, 0]}>
-                <boxGeometry args={[0.12, 0.05, tubeLen]} />
+              <mesh key={ti} position={[tx, -0.03, 0]}>
+                <boxGeometry args={[0.10, 0.04, tubeLen * 0.9]} />
                 <meshStandardMaterial
-                  color={isOn ? '#fffde8' : '#1a1a28'}
-                  emissive={isOn ? '#fffde8' : '#000'}
-                  emissiveIntensity={isOn ? 2.5 : 0}
+                  color="#fffef0"
+                  emissive="#fffef0"
+                  emissiveIntensity={isOn ? 5 : 0}
                 />
               </mesh>
             ))}
-            {/* Point lights spread along tube positions */}
+            {/* Point lights below fixture */}
             {isOn && tubes.map((tx, ti) => (
               <pointLight
                 key={ti}
-                position={[tx, -0.8, 0]}
-                intensity={3.5 / numTubes}
-                distance={16}
+                position={[tx, -1.0, 0]}
+                intensity={5 / numTubes}
+                distance={22}
                 decay={2}
                 color={lcolor}
                 castShadow={false}
@@ -928,9 +932,9 @@ function Scene({
   return (
     <>
       {/* Office lighting: hemisphere (cool sky / warm floor bounce) + soft directional */}
-      <hemisphereLight args={['#c0ccf8', '#2a180a', 0.55]} />
-      <ambientLight intensity={0.18} color="#f0eeff" />
-      <directionalLight position={[20, 30, 20]} intensity={0.22} castShadow={false} />
+      <hemisphereLight args={['#c8d4f8', '#2a180a', 0.5]} />
+      <ambientLight intensity={0.35} color="#f0eeff" />
+      <directionalLight position={[20, 30, 20]} intensity={0.4} castShadow={false} />
 
       {/* Camera: meeting room → spectator follow → spectator free → player follow */}
       {meetingActive  && <MeetingCamera center={meetingCenter} />}
