@@ -85,6 +85,11 @@ function astarPath(
       const nk = key(nx, nz)
       if (closed.has(nk)) continue
       if (grid.get(nk) !== 0) continue  // not walkable
+      // No corner-cutting: diagonal moves require both adjacent cardinal cells to be open
+      if (dx !== 0 && dz !== 0) {
+        if (grid.get(key(cur.x + dx, cur.z)) !== 0) continue
+        if (grid.get(key(cur.x, cur.z + dz)) !== 0) continue
+      }
       const g = cur.g + (dx !== 0 && dz !== 0 ? 1.414 : 1)
       const existing = open.get(nk)
       if (!existing || g < existing.g) {
@@ -1187,24 +1192,10 @@ export class GameRoom extends Room<GameState> {
                 }, holdMs)
               }
             } else {
-              // Walk toward current waypoint
+              // Walk toward current waypoint — A* already validated cells so no re-check needed
               const speed = Math.min(WALK_SPEED, dist)
-              const nextX = player.x + (dx / dist) * speed
-              const nextZ = player.z + (dz / dist) * speed
-              const md    = this.mapData
-              if (md) {
-                const { grids, gridW, gridH } = md
-                const fl = player.floor
-                if      (isWalkable(nextX, nextZ, fl, grids, gridW, gridH)) { player.x = nextX; player.z = nextZ }
-                else if (isWalkable(nextX, player.z, fl, grids, gridW, gridH)) { player.x = nextX }
-                else if (isWalkable(player.x, nextZ, fl, grids, gridW, gridH)) { player.z = nextZ }
-                else {
-                  // Fully stuck — recompute path next tick
-                  ai.waypoints = []
-                }
-              } else {
-                player.x = nextX; player.z = nextZ
-              }
+              player.x += (dx / dist) * speed
+              player.z += (dz / dist) * speed
               player.facing = Math.atan2(dx, dz)
             }
             continue
