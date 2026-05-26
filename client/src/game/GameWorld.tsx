@@ -1079,6 +1079,7 @@ export default function GameWorld({
       shadows
       camera={{ fov: 50, near: 0.1, far: 400, position: [18, 16, 18] }}
       style={{ position: 'fixed', inset: 0, zIndex: 0, width: '100vw', height: '100vh' }}
+      resize={{ debounce: { scroll: 50, resize: 200 } }}
     >
       <Suspense fallback={null}>
         <Scene

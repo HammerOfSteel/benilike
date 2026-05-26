@@ -4,6 +4,7 @@ import { ROLE_LABELS } from '@shared/types'
 import { TASK_DEFS, AI_TASK_DEFS } from '@shared/tasks'
 import GameWorld from '../../game/GameWorld'
 import Minimap from '../../game/Minimap'
+import Radio from '../../game/Radio'
 import type { Screen } from '../../App'
 import type { StationInfo, BodyInfo, TaskId } from '@shared/types'
 import styles from './screens.module.css'
@@ -303,6 +304,9 @@ export default function GameScreen({ onNavigate }: Props) {
           ESC LEAVE
         </button>
       </div>
+
+      {/* ── Radio (bottom-right) ── */}
+      <Radio />
     </div>
   )
 }

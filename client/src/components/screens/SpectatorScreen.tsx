@@ -3,6 +3,7 @@ import { useGameRoom } from '../../store/useGameRoom'
 import { ROLE_LABELS } from '@shared/types'
 import { TASK_DEFS, AI_TASK_DEFS } from '@shared/tasks'
 import GameWorld from '../../game/GameWorld'
+import Radio from '../../game/Radio'
 import type { Screen } from '../../App'
 import type { SprintInfo, BodyInfo, TaskId } from '@shared/types'
 
@@ -634,7 +635,10 @@ export default function SpectatorScreen({ onNavigate }: Props) {
         })}
       </div>
 
-      {/* ── Task completion toasts (bottom right) ────────────────── */}
+      {/* ── Radio (bottom-right, above toasts) ── */}
+      <Radio style={{ bottom: '7rem' }} />
+
+      {/* ── Task completion toasts (bottom right, above radio) ──── */}
       <div style={{
         position: 'absolute', bottom: '1.5rem', right: '1rem',
         display: 'flex', flexDirection: 'column-reverse', gap: '0.4rem',
