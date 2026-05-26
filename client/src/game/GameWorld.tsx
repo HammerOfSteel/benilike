@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard, useGLTF } from '@react-three/drei'
+import { OrbitControls, Text, Billboard, useGLTF, useTexture } from '@react-three/drei'
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from 'react'
 import * as THREE from 'three'
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -407,6 +407,12 @@ useGLTF.preload('/models/FileCabinet_Standard.glb')
 useGLTF.preload('/models/CoffeeMachine.glb')
 useGLTF.preload('/models/CoffeeTable.glb')
 useGLTF.preload('/models/Printer.glb')
+useTexture.preload('/models/Paintings.png')
+useTexture.preload('/models/Paintings2.png')
+useTexture.preload('/models/Paintings3.png')
+useTexture.preload('/models/Paintings4.png')
+useTexture.preload('/models/Rug_1.png')
+useTexture.preload('/models/Rug_2.png')
 
 // Zones that get a coffee machine / printer break area
 const COFFEE_ZONES = new Set(['main_office', 'hr_corner', 'exec_suite', 'marketing_hub'])
@@ -419,6 +425,13 @@ function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number })
   const { scene: coffeeScene   } = useGLTF('/models/CoffeeMachine.glb')
   const { scene: tableScene    } = useGLTF('/models/CoffeeTable.glb')
   const { scene: printerScene  } = useGLTF('/models/Printer.glb')
+  const [p1, p2, p3, p4, rug1, rug2] = useTexture([
+    '/models/Paintings.png', '/models/Paintings2.png',
+    '/models/Paintings3.png', '/models/Paintings4.png',
+    '/models/Rug_1.png', '/models/Rug_2.png',
+  ])
+  const paintTextures = useMemo(() => [p1, p2, p3, p4], [p1, p2, p3, p4])
+  const rugTextures   = useMemo(() => [rug1, rug2], [rug1, rug2])
 
   const items = useMemo(() => {
     const out: { key: string; scene: THREE.Group; x: number; z: number; ry: number; scale?: number }[] = []
@@ -467,10 +480,49 @@ function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number })
       const rw = room.wx2 - room.wx1
       const rd = room.wz2 - room.wz1
       if (rw < 6 || rd < 6) return
-      // Up to 2 plants per room in far corners
       out.push({ key: `plant-${ri}-a`, x: room.wx2 - 0.7, z: room.wz2 - 0.8, seed: ri })
       if (rw >= 9 && rd >= 9) {
         out.push({ key: `plant-${ri}-b`, x: room.wx1 + 0.7, z: room.wz2 - 0.8, seed: ri + 7 })
+      }
+    })
+    return out
+  }, [mapData, floor])
+
+  // Wall paintings: one on back wall, one on right wall per room
+  const paintings = useMemo(() => {
+    const out: { key: string; x: number; z: number; ry: number; texIdx: number }[] = []
+    mapData.rooms.filter(r => r.floor === floor).forEach((room, ri) => {
+      const rw = room.wx2 - room.wx1
+      const rd = room.wz2 - room.wz1
+      if (rw < 6 || rd < 5) return
+      const zone = room.zone ?? ''
+      if (zone === 'server_room' || zone === 'network_closet') return
+      // Back wall centred horizontally
+      const cx = (room.wx1 + room.wx2) / 2
+      out.push({ key: `paint-b-${ri}`, x: cx, z: room.wz2 - 0.07, ry: Math.PI, texIdx: ri % 4 })
+      // Right wall centred vertically (only if wide room)
+      if (rd >= 8) {
+        const cz = (room.wz1 + room.wz2) / 2
+        out.push({ key: `paint-r-${ri}`, x: room.wx2 - 0.07, z: cz, ry: -Math.PI / 2, texIdx: (ri + 2) % 4 })
+      }
+    })
+    return out
+  }, [mapData, floor])
+
+  // Rugs: in exec_suite (centred) and under coffee area in coffee zones
+  const rugs = useMemo(() => {
+    const out: { key: string; x: number; z: number; rw: number; rd: number; texIdx: number }[] = []
+    mapData.rooms.filter(r => r.floor === floor).forEach((room, ri) => {
+      const rw = room.wx2 - room.wx1
+      const rd = room.wz2 - room.wz1
+      const zone = room.zone ?? ''
+      if (zone === 'exec_suite' && rw >= 6 && rd >= 6) {
+        const cx = (room.wx1 + room.wx2) / 2
+        const cz = (room.wz1 + room.wz2) / 2
+        out.push({ key: `rug-exec-${ri}`, x: cx, z: cz, rw: Math.min(rw * 0.6, 5), rd: Math.min(rd * 0.6, 4), texIdx: 0 })
+      }
+      if (COFFEE_ZONES.has(zone) && rw >= 7) {
+        out.push({ key: `rug-coffee-${ri}`, x: room.wx2 - 1.8, z: room.wz1 + 1.5, rw: 2.8, rd: 2.2, texIdx: 1 })
       }
     })
     return out
@@ -487,6 +539,33 @@ function RoomDecoration({ mapData, floor }: { mapData: MapData; floor: number })
       ))}
       {plants.map(p => (
         <OfficePlant key={p.key} x={p.x} z={p.z} floorY={floorY} seed={p.seed} />
+      ))}
+      {/* Wall paintings — each one protrudes slightly from the wall */}
+      {paintings.map(p => {
+        // forward direction (toward room interior) for the painting's rotation
+        const fwdX = -Math.sin(p.ry) * 0.05
+        const fwdZ = -Math.cos(p.ry) * 0.05
+        return (
+          <group key={p.key}>
+            {/* Dark frame (flush with wall) */}
+            <mesh position={[p.x, floorY + 2.5, p.z]} rotation={[0, p.ry, 0]}>
+              <planeGeometry args={[1.26, 1.02]} />
+              <meshStandardMaterial color="#1a1008" roughness={0.9} />
+            </mesh>
+            {/* Canvas (slightly in front of frame) */}
+            <mesh position={[p.x + fwdX, floorY + 2.5, p.z + fwdZ]} rotation={[0, p.ry, 0]}>
+              <planeGeometry args={[1.1, 0.88]} />
+              <meshStandardMaterial map={paintTextures[p.texIdx]} roughness={0.8} />
+            </mesh>
+          </group>
+        )
+      })}
+      {/* Floor rugs */}
+      {rugs.map(r => (
+        <mesh key={r.key} position={[r.x, floorY + 0.09, r.z]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[r.rw, r.rd]} />
+          <meshStandardMaterial map={rugTextures[r.texIdx]} roughness={0.95} />
+        </mesh>
       ))}
     </>
   )
@@ -707,9 +786,9 @@ function BodyMarker({ body, floorY, isNear }: { body: BodyInfo; floorY: number; 
 // ── Follow Camera ─────────────────────────────────────────────────────────────
 // camAngle: angle (radians) of the camera offset from the player in the XZ plane.
 // π/4 = 45° matches the original fixed offset (18, 16, 18) where R = 18√2 ≈ 25.5.
-// [ key rotates CCW, ] key rotates CW. Both controlled from LocalPlayerController.
+// Controlled by right-mouse-drag (in LocalPlayerController).
 let camAngle = Math.PI / 4
-const CAM_R       = 26          // horizontal radius (≈ 18 * √2, rounded up)
+let CAM_R    = 26          // horizontal radius — adjustable via scroll wheel (10–50)
 const CAM_DESIRED = new THREE.Vector3()
 const CAM_LOOKAT  = new THREE.Vector3()
 
@@ -772,12 +851,31 @@ function LocalPlayerController({
     return s.players.find(p => p.sessionId === sid)?.name ?? ''
   })
 
+  // Mouse camera: right-drag to orbit, scroll to zoom
+  useEffect(() => {
+    let dragging = false
+    let lastX = 0
+    const noCtx   = (e: MouseEvent)   => e.preventDefault()
+    const onDown  = (e: PointerEvent) => { if (e.button === 2) { dragging = true; lastX = e.clientX } }
+    const onMove  = (e: PointerEvent) => { if (dragging) { camAngle += (e.clientX - lastX) * 0.008; lastX = e.clientX } }
+    const onUp    = ()                => { dragging = false }
+    const onWheel = (e: WheelEvent)   => { e.preventDefault(); CAM_R = Math.max(10, Math.min(50, CAM_R + e.deltaY * 0.03)) }
+    window.addEventListener('contextmenu', noCtx)
+    window.addEventListener('pointerdown',  onDown)
+    window.addEventListener('pointermove',  onMove)
+    window.addEventListener('pointerup',    onUp)
+    window.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      window.removeEventListener('contextmenu', noCtx)
+      window.removeEventListener('pointerdown',  onDown)
+      window.removeEventListener('pointermove',  onMove)
+      window.removeEventListener('pointerup',    onUp)
+      window.removeEventListener('wheel', onWheel)
+    }
+  }, [])
+
   useFrame((_, delta) => {
     const k   = keys.current
-
-    // Camera rotation: [ rotates CCW (left), ] rotates CW (right)
-    if (k['BracketLeft'])  camAngle -= 1.4 * delta
-    if (k['BracketRight']) camAngle += 1.4 * delta
 
     let dx = 0, dz = 0
     if (k['KeyW'] || k['ArrowUp'])    dz -= 1
@@ -787,6 +885,10 @@ function LocalPlayerController({
 
     movingRef.current = (dx !== 0 || dz !== 0)
     if (dx !== 0 || dz !== 0) {
+      // Camera-relative movement: rotate WASD input by camAngle so W = toward top of screen
+      const rawDx = dx, rawDz = dz
+      dx = rawDx * Math.cos(camAngle) + rawDz * Math.sin(camAngle)
+      dz = -rawDx * Math.sin(camAngle) + rawDz * Math.cos(camAngle)
       const len = Math.sqrt(dx * dx + dz * dz)
       dx /= len; dz /= len
       const spd = SPEED

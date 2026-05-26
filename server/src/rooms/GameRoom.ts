@@ -764,14 +764,14 @@ export class GameRoom extends Room<GameState> {
       // Schedule bot meeting chat
       this.scheduleBotMeetingChat()
 
-      // 45-second auto-resolve — matches the client countdown timer
+      // 60-second auto-resolve — matches the client countdown timer
       if (this.allHandsTimeout) this.allHandsTimeout.clear()
       this.allHandsTimeout = this.clock.setTimeout(() => {
         if (this.state.phase === 'meeting') {
           this.scheduleBotVotes(0)  // immediate votes for any who haven't yet
           this.clock.setTimeout(() => this.resolveVote(), 3000)
         }
-      }, 45_000)
+      }, 60_000)
     } catch (err) {
       console.error('[GameRoom.triggerAllHands] Error:', err)
     }

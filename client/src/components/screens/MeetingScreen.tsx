@@ -6,8 +6,8 @@ import styles from './screens.module.css'
 
 // Server resolves after 45 s — vote panel is shown immediately so the player
 // has the full window (not just the last 3 seconds)
-const MEETING_DURATION_MS = 45_000
-const RESULT_SHOW_MS = 5_000
+const MEETING_DURATION_MS = 60_000
+const RESULT_SHOW_MS = 8_000
 
 interface Props { onNavigate: (s: Screen) => void }
 

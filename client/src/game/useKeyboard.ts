@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const BLOCKED = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE', 'BracketLeft', 'BracketRight']
+const BLOCKED = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE']
 
 export function useKeyboard() {
   const keys = useRef<Record<string, boolean>>({})
