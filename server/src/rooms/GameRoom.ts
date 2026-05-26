@@ -397,10 +397,6 @@ export class GameRoom extends Room<GameState> {
         const killer = this.state.players.get(client.sessionId)
         if (!killer || killer.isEliminated) return
 
-        // Require all phase-1 AI tasks completed
-        const phase1Tasks = AI_TASK_DEFS.filter(t => t.aiPhase === 1).map(t => t.id)
-        if (!phase1Tasks.every(t => this.aiPhaseCompleted.has(t))) return
-
         // 30-second kill cooldown
         const lastKill = this.killCooldowns.get(client.sessionId) ?? 0
         if (Date.now() - lastKill < 30_000) {
