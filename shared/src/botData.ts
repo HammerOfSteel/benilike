@@ -125,6 +125,8 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'Is this in Jira? I\'m not seeing this in Jira.',
         'I\'m going to take a proactive approach and touch base with the relevant stakeholders.',
         'Per my last action item, I am deep in execution mode. Very busy. Very aligned.',
+        'Just wanted to circle back on {other}\'s earlier point. Flagging it as a risk.',
+        'Has anyone synced with {other} recently? Their output cadence has been… unclear.',
       ],
     },
   },
@@ -179,6 +181,8 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'I don\'t want to alarm anyone but I\'m alarmed.',
         'Staying visible. If anyone needs to know where I am, I\'m HERE.',
         'The lights flickered. Why did the lights flicker. I\'m logging this.',
+        'Where is {other} right now. Does anyone know. Why don\'t we know.',
+        'I clocked {other} going into the server room. Twice. Without explanation.',
       ],
     },
   },
@@ -340,6 +344,9 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'Between you and me — actually never mind. I\'ll save it for the meeting.',
         'The server room smells different today. I\'m just saying.',
         'I know things. I always know things. That\'s my whole thing.',
+        'Okay don\'t look but {other} just walked past for the third time.',
+        'Has anyone else noticed that {other} never eats lunch? Interesting.',
+        'I\'m not saying {other} is suspicious. I\'m saying the situation around {other} is suspicious.',
       ],
     },
   },
@@ -574,8 +581,9 @@ export function randomPersonality(seed: number): BotPersonality {
 }
 
 /** Fill in template placeholders: {name}, {self} */
-export function fillTemplate(template: string, vars: { name?: string; self?: string }): string {
+export function fillTemplate(template: string, vars: { name?: string; self?: string; other?: string }): string {
   return template
-    .replace(/\{name\}/g, vars.name ?? 'someone')
-    .replace(/\{self\}/g, vars.self ?? 'me')
+    .replace(/\{name\}/g,  vars.name  ?? 'someone')
+    .replace(/\{self\}/g,  vars.self  ?? 'me')
+    .replace(/\{other\}/g, vars.other ?? 'a colleague')
 }
