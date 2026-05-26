@@ -15,19 +15,30 @@ interface Props { onNavigate: (s: Screen) => void }
 
 export default function RetroScreen({ onNavigate }: Props) {
   const { room, retroData, sprint } = useGameRoom()
+  const isSpectator = useGameRoom(s => s.isSpectator)
   const [timeLeft,   setTimeLeft]   = useState(Math.floor(RETRO_MS / 1000))
   const [myPerkVote, setMyPerkVote] = useState<string | null>(null)
 
-  // Timer
+  const returnScreen: Screen = isSpectator ? 'spectator' : 'game'
+
+  // Log key state on mount so we can see it in console
+  useEffect(() => {
+    console.log(`[BENI:RetroScreen] mounted — isSpectator=${isSpectator}, returnScreen='${isSpectator ? 'spectator' : 'game'}'`)
+    // Spectators should never reach RetroScreen — redirect immediately
+    if (isSpectator) {
+      console.warn('[BENI:RetroScreen] ⚠ spectator on RetroScreen — redirecting to spectator')
+      onNavigate('spectator')
+    }
+  }, [])
   useEffect(() => {
     const id = setInterval(() => {
       setTimeLeft(t => {
-        if (t <= 1) { clearInterval(id); onNavigate('game'); return 0 }
+        if (t <= 1) { clearInterval(id); onNavigate(returnScreen); return 0 }
         return t - 1
       })
     }, 1000)
     return () => clearInterval(id)
-  }, [onNavigate])
+  }, [onNavigate, returnScreen])
 
   // Perk awarded message
   useEffect(() => {
@@ -101,7 +112,7 @@ export default function RetroScreen({ onNavigate }: Props) {
           )}
         </div>
 
-        <button className={styles.ghostBtn} style={{ marginTop: '0.75rem' }} onClick={() => onNavigate('game')}>
+        <button className={styles.ghostBtn} style={{ marginTop: '0.75rem' }} onClick={() => onNavigate(returnScreen)}>
           CONTINUE
         </button>
       </div>

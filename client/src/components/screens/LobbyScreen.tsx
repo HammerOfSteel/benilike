@@ -32,6 +32,7 @@ export default function LobbyScreen({ onNavigate }: Props) {
           connected:    p.connected ?? true,
           isBot:        p.isBot        ?? false,
           isEliminated: p.isEliminated ?? false,
+          isSpectator:  p.isSpectator  ?? false,
           allHandsLeft: p.allHandsLeft ?? 2,
           floor:        p.floor        ?? 0,
         }))
@@ -55,15 +56,30 @@ export default function LobbyScreen({ onNavigate }: Props) {
       onNavigate('main-menu')
     })
 
-    room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large' }) => {
-      useGameRoom.getState().setMapConfig(data.seed, data.mapSize)
-      onNavigate('briefing')
+    room.onMessage('game_start', (data: { seed: string; mapSize: 'small' | 'medium' | 'large'; stations?: StationInfo[] }) => {
+      const gs = useGameRoom.getState()
+      gs.setMapConfig(data.seed, data.mapSize)
+      if (data.stations) {
+        gs.setStations(data.stations)
+        console.log(`[BENI:LobbyScreen] game_start stations=${data.stations.length}`)
+      } else {
+        console.log('[BENI:LobbyScreen] game_start — no stations in payload, waiting for station_list')
+      }
+      const dest = gs.isSpectator ? 'spectator' : 'briefing'
+      console.log(`[BENI:LobbyScreen] game_start → navigating to '${dest}' (isSpectator=${gs.isSpectator})`)
+      onNavigate(dest)
     })
 
-    // These arrive in the same WS burst as game_start — capture them here so
-    // they aren't dropped before GameWorld mounts its own handlers.
+    // Fallback for servers that still send station_list separately
     room.onMessage('station_list', (data: { stations: StationInfo[] }) => {
+      console.log(`[BENI:LobbyScreen] station_list received — ${data.stations.length} stations (storing)`)
       useGameRoom.getState().setStations(data.stations)
+    })
+
+    // Arrives before game_start (sent during assignRolesAndTasks) — store for SpectatorScreen
+    room.onMessage('ai_revealed', (data: { sessionId: string; name: string; coverRole: string; tasks: TaskId[] }) => {
+      console.log(`[BENI:LobbyScreen] ai_revealed — ${data.name} is the Rogue AI`)
+      useGameRoom.getState().setAiRevealed(data.sessionId, data.tasks)
     })
 
     room.onMessage('task_complete', (data: { taskId: TaskId; playerName: string }) => {

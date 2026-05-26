@@ -29,6 +29,17 @@ export default function GameScreen({ onNavigate }: Props) {
     toasts, clearRoom,
   } = useGameRoom()
 
+  // Safety redirect — spectators should never be on GameScreen
+  const isSpectatorGuard = useGameRoom(s => s.isSpectator)
+  useEffect(() => {
+    if (isSpectatorGuard) {
+      console.warn('[BENI:GameScreen] ⚠ isSpectator=true detected on GameScreen — redirecting to spectator')
+      onNavigate('spectator')
+    } else {
+      console.log('[BENI:GameScreen] mounted, isSpectator=false ✓')
+    }
+  }, [isSpectatorGuard, onNavigate])
+
   const [nearStation,  setNearStation]  = useState<StationInfo | null>(null)
   const [nearBody,     setNearBody]     = useState<BodyInfo | null>(null)
   const [currentZone,  setCurrentZone]  = useState<string | null>(null)
@@ -40,8 +51,15 @@ export default function GameScreen({ onNavigate }: Props) {
     if (!room) return
 
     room.onMessage('all_hands_start', (data: { calledBy: string; bodyId?: string }) => {
-      useGameRoom.getState().addIncident(`ALL-HANDS called by ${data.calledBy}`, 'warn')
-      onNavigate('meeting')
+      const gs = useGameRoom.getState()
+      gs.addIncident(`ALL-HANDS called by ${data.calledBy}`, 'warn')
+      if (gs.isSpectator) {
+        console.warn('[BENI:GameScreen] all_hands_start received but isSpectator=true — redirecting to spectator instead of meeting')
+        onNavigate('spectator')
+      } else {
+        console.log('[BENI:GameScreen] all_hands_start → navigating to meeting')
+        onNavigate('meeting')
+      }
     })
 
     room.onMessage('retro_start', (data: any) => {

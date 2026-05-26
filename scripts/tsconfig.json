@@ -3,6 +3,7 @@
   "compilerOptions": {
     "lib":            ["ES2020"],
     "types":          ["node"],
+    "typeRoots":      ["../server/node_modules/@types"],
     "rootDirs":       [".", "../shared/src", "../server/src"],
     "baseUrl":        ".",
     "esModuleInterop": true

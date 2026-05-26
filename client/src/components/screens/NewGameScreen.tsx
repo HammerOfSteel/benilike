@@ -54,7 +54,10 @@ export default function NewGameScreen({ onNavigate }: Props) {
         spectate: spectateMode,
       })
       setRoom(room)
-      if (spectateMode) setSpectator(true)
+      if (spectateMode) {
+        console.log('[BENI:NewGameScreen] spectateMode=true \u2192 calling setSpectator(true)')
+        setSpectator(true)
+      }
       // Register handlers NOW — before LobbyScreen mounts — so no messages are missed
       room.onMessage('role_assigned', (data: { role: string; faction: string }) => {
         useGameRoom.getState().setRole(data.role as any, data.faction as any)
@@ -63,7 +66,7 @@ export default function NewGameScreen({ onNavigate }: Props) {
         useGameRoom.getState().setGameEnd(data.winner, data.reason)
       })
       setRoomCode(room.id.slice(0, 8).toUpperCase())
-      lobbyTimerRef.current = setTimeout(() => onNavigate(spectateMode ? 'spectator' : 'lobby'), 1800)
+      lobbyTimerRef.current = setTimeout(() => onNavigate('lobby'), 1800)
     } catch {
       // Server offline — show mock code for UI demo
       setRoomCode(generateCode())

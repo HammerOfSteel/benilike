@@ -29,6 +29,11 @@ import {
   PERSONALITIES,
   type BotPersonality,
 } from '../../../shared/src/botData'
+import {
+  isWalkable,
+  generateMapData,
+  type MapData,
+} from '../../../shared/src/mapgen'
 
 const INTERACT_R = 2.5
 
@@ -44,9 +49,12 @@ interface HoldState {
 }
 
 type BotAI = {
-  mode:          'wander' | 'work'
+  mode:          'wander' | 'travel' | 'work'
   workUntil:     number
+  nextActionAt:  number   // don't start acting before this timestamp
   targetStation: string | null
+  targetX:       number
+  targetZ:       number
 }
 
 export class GameRoom extends Room<GameState> {
@@ -63,6 +71,7 @@ export class GameRoom extends Room<GameState> {
   private aiPhaseCompleted = new Set<TaskId>()
   private shutdownCooldownUntil = 0
   private sprintTimer:    ReturnType<typeof this.clock.setInterval> | null = null
+  private mapData:        MapData | null = null
   private votes           = new Map<string, string>()   // voter → target sessionId | 'skip'
   private perkVotes       = new Map<string, string>()
   private activePerk:     string | null = null
@@ -84,8 +93,29 @@ export class GameRoom extends Room<GameState> {
 
       resetBotNameCounter()
       this.registerMessageHandlers()
+
+      // Spawn server-side bots (no real WS connection — pure state entries)
+      const botCount = Math.min(options.botCount ?? 0, 9)
+      this.spawnBots(botCount)
     } catch (err) {
       console.error('[GameRoom.onCreate] Error:', err)
+    }
+  }
+
+  /** Create server-authoritative bot players directly in state (no WS connection). */
+  private spawnBots(count: number) {
+    for (let i = 0; i < count; i++) {
+      const sessionId = `bot-${i}-${Math.random().toString(36).slice(2, 6)}`
+      const player         = new Player()
+      player.sessionId     = sessionId
+      player.isBot         = true
+      player.name          = generateBotName(this.botNameCounter++)
+      player.x             = 10 + i * 3
+      player.z             = 10
+      const personality    = randomPersonality(this.botNameCounter)
+      this.botPersonalities.set(sessionId, personality)
+      this.botAI.set(sessionId, { mode: 'wander', workUntil: 0, nextActionAt: 0, targetStation: null, targetX: 0, targetZ: 0 })
+      this.state.players.set(sessionId, player)
     }
   }
 
@@ -101,7 +131,7 @@ export class GameRoom extends Room<GameState> {
         player.name = generateBotName(this.botNameCounter++)
         const personality = randomPersonality(this.botNameCounter)
         this.botPersonalities.set(client.sessionId, personality)
-        this.botAI.set(client.sessionId, { mode: 'wander', workUntil: 0, targetStation: null })
+        this.botAI.set(client.sessionId, { mode: 'wander', workUntil: 0, nextActionAt: 0, targetStation: null, targetX: 0, targetZ: 0 })
       } else {
         player.name = (options.name ?? 'Player').slice(0, 24)
       }
@@ -180,8 +210,12 @@ export class GameRoom extends Room<GameState> {
         const seed    = (this.state as any).mapSeed as string
         const mapSize = (this.state as any).mapSize as 'small' | 'medium' | 'large'
 
+        // Generate map once; reuse for station placement and bot walkability
+        const md = generateMapData(seed, mapSize)
+        this.mapData = md
+
         // Build station list from map
-        const stationList = assignStations(seed, mapSize, TASK_DEFS)
+        const stationList = assignStations(seed, mapSize, TASK_DEFS, md)
         for (const info of stationList) {
           this.stations.set(info.stationId, { info, completedBy: null })
         }
@@ -189,7 +223,22 @@ export class GameRoom extends Room<GameState> {
         // Assign roles and tasks to players
         this.assignRolesAndTasks(allPlayers)
 
-        this.broadcast('game_start', { seed, mapSize })
+        // Position bots near their first assigned task station so they spawn inside rooms
+        for (const [sessionId] of this.botAI) {
+          const player = this.state.players.get(sessionId)
+          if (!player) continue
+          const botTasks    = this.assignedTasks.get(sessionId) ?? []
+          const firstStation = stationList.find(s => s.taskId && botTasks.includes(s.taskId as TaskId))
+          if (firstStation) {
+            player.x     = firstStation.x + (Math.random() - 0.5) * 4
+            player.z     = firstStation.z + (Math.random() - 0.5) * 4
+            player.floor = firstStation.floor
+          }
+        }
+
+        // Broadcast game_start with station data included so clients don't
+        // need a separate station_list message (avoids timing/ordering issues)
+        this.broadcast('game_start', { seed, mapSize, stations: stationList })
 
         // Start sprint 1 after a short briefing delay
         this.clock.setTimeout(() => {
@@ -308,6 +357,16 @@ export class GameRoom extends Room<GameState> {
 
         this.votes.set(client.sessionId, targetId)
 
+        // Broadcast vote cast for spectator visualization
+        const vCaster  = this.state.players.get(client.sessionId)
+        const vTarget  = this.state.players.get(targetId)
+        this.broadcast('vote_cast', {
+          voterName:       vCaster?.name ?? '',
+          voterSessionId:  client.sessionId,
+          targetName:      targetId === 'skip' ? 'skip' : (vTarget?.name ?? 'skip'),
+          targetSessionId: targetId,
+        })
+
         // Check if all living players have voted
         const livingPlayers = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
         if (this.votes.size >= livingPlayers.length) {
@@ -398,6 +457,24 @@ export class GameRoom extends Room<GameState> {
           roomClient?.send('role_assigned', { role, assignedTasks: taskIds })
         }
       }
+
+      // Tell spectators who the rogue AI is (full intel — spectators are observers)
+      if (this.aiSessionId) {
+        const aiPlayer  = this.state.players.get(this.aiSessionId)
+        const aiTasks   = this.assignedTasks.get(this.aiSessionId) ?? []
+        const spectatorClients = this.clients.filter(c => {
+          const p = this.state.players.get(c.sessionId)
+          return p?.isSpectator === true
+        })
+        for (const sc of spectatorClients) {
+          sc.send('ai_revealed', {
+            sessionId: this.aiSessionId,
+            name:      aiPlayer?.name ?? 'Unknown',
+            coverRole: aiPlayer?.role ?? '',
+            tasks:     aiTasks,
+          })
+        }
+      }
     } catch (err) {
       console.error('[GameRoom.assignRolesAndTasks] Error:', err)
     }
@@ -407,6 +484,9 @@ export class GameRoom extends Room<GameState> {
 
   private completeTask(sessionId: string, stationId: string) {
     try {
+      // Guard: only complete tasks while the sprint is active
+      if (this.state.phase !== 'game') return
+
       const hold    = this.holdState.get(sessionId)
       if (!hold || hold.stationId !== stationId) return
 
@@ -435,6 +515,12 @@ export class GameRoom extends Room<GameState> {
 
       this.broadcast('task_complete', { taskId, playerName: player.name })
       this.broadcastSprintUpdate()
+
+      // Check if sprint quota is now met
+      if (this.state.sprintDone >= this.state.sprintQuota) {
+        this.endSprint(true)
+        return
+      }
 
       // Check if AI phase task
       const allTaskDefs = [...TASK_DEFS, ...AI_TASK_DEFS]
@@ -493,12 +579,35 @@ export class GameRoom extends Room<GameState> {
       this.state.phase       = 'game'
       this.state.sprintNumber = sprintNum
 
+      // Reset station completions for sprint 2+ so tasks can be done again
+      if (sprintNum > 1) {
+        for (const [, st] of this.stations) {
+          st.completedBy = null
+        }
+        this.state.completedTasks.clear()
+      }
+
       const livingWorkers = Array.from(this.state.players.values()).filter(p => !p.isEliminated).length
       const size = (this.state.sprintSize as 'small' | 'medium' | 'large') ?? 'medium'
       this.state.sprintQuota  = sprintQuota(livingWorkers, size)
       this.state.sprintDone   = 0
       this.state.sprintTimeLeft = Math.floor(SPRINT_DURATION_MS / 1000)
       this.sprintPlayerDone.clear()
+
+      // Stagger bot start times so they don't all move simultaneously
+      const now = Date.now()
+      let botIndex = 0
+      for (const [sessionId, ai] of this.botAI) {
+        const player = this.state.players.get(sessionId)
+        if (!player || player.isEliminated) continue
+        ai.mode          = 'wander'
+        ai.targetStation = null
+        // Stagger: each bot starts 5-10s after the previous, with small random jitter
+        ai.nextActionAt  = now + 5000 + botIndex * 6000 + Math.random() * 3000
+        botIndex++
+      }
+
+      this.scheduleGameBanter()
 
       this.broadcastSprintUpdate()
 
@@ -662,53 +771,75 @@ export class GameRoom extends Room<GameState> {
 
   // ── Bot meeting chat & voting ───────────────────────────────────────────────────
 
+  /** Helper: schedule a single chat line from a bot, capped at 55s into meeting */
+  private schedBotChat(sessionId: string, lines: string[], delay: number, targetName: string) {
+    if (delay > 55000 || !lines.length) return
+    this.clock.setTimeout(() => {
+      try {
+        if (this.state.phase !== 'meeting') return
+        const player = this.state.players.get(sessionId)
+        if (!player || player.isEliminated) return
+        const line = lines[Math.floor(Math.random() * lines.length)]
+        const text = fillTemplate(line, { name: targetName, self: player.name })
+        this.broadcast('chat', { senderId: sessionId, name: player.name, text })
+      } catch (err) {
+        console.error('[GameRoom] schedBotChat error:', err)
+      }
+    }, delay)
+  }
+
   private scheduleBotMeetingChat() {
     try {
-      const bots = Array.from(this.state.players.values()).filter(p => p.isBot && !p.isEliminated && !p.isSpectator)
+      const bots   = Array.from(this.state.players.values()).filter(p => p.isBot && !p.isEliminated && !p.isSpectator)
       const living = Array.from(this.state.players.values()).filter(p => !p.isEliminated && !p.isSpectator)
-      const otherNames = living.map(p => p.name)
+
+      // Pick a primary "suspect" for bots to argue about (prefer a human, otherwise a random bot)
+      const humans   = living.filter(p => !p.isBot)
+      const suspects = humans.length > 0 ? humans : living.filter(p => p.isBot)
+      const mainSuspect = suspects[Math.floor(Math.random() * suspects.length)]
+      const suspectName = mainSuspect?.name ?? 'someone'
+
+      // The set of bots that will accuse (to schedule defender responses)
+      const accuserPersonalities = new Set(['paranoid', 'conspiracy_theorist', 'gossip', 'methodical', 'rogue_ai'])
+      const agreeerPersonalities = new Set(['sycophant', 'corporate_drone', 'clueless'])
 
       for (const bot of bots) {
         const personality = this.botPersonalities.get(bot.sessionId) ?? 'chaotic'
         const pDef = PERSONALITIES[personality]
         const [minFirst, maxFirst] = pDef.firstSpeakDelay
 
-        // Each bot sends 1-3 messages during the chat phase
-        const msgCount = 1 + Math.floor(Math.random() * 2)
+        // ── Round 1 (0–15s): Opening statement ─────────────────────────────
+        const openDelay = minFirst + Math.random() * (maxFirst - minFirst)
+        this.schedBotChat(bot.sessionId, pDef.lines.opening, openDelay, suspectName)
 
-        for (let m = 0; m < msgCount; m++) {
-          // Stagger messages so they don't all come at once
-          const delay = minFirst + Math.random() * (maxFirst - minFirst) + (m * 8000)
-          // Don't exceed 50s (stay within chat phase)
-          if (delay > 50_000) continue
-
-          this.clock.setTimeout(() => {
-            try {
-              if (this.state.phase !== 'meeting') return
-              if (bot.isEliminated) return
-
-              // Pick message type based on position in sequence
-              const linePool = m === 0
-                ? pDef.lines.opening
-                : (Math.random() < 0.5 ? pDef.lines.accuse : pDef.lines.wild)
-
-              const template = linePool[Math.floor(Math.random() * linePool.length)]
-              const targetName = otherNames.filter(n => n !== bot.name)[Math.floor(Math.random() * Math.max(1, otherNames.length - 1))]
-              const text = fillTemplate(template, { name: targetName ?? 'someone', self: bot.name })
-
-              this.broadcast('chat', { senderId: bot.sessionId, name: bot.name, text })
-            } catch (err) {
-              console.error(`[GameRoom] Bot chat error (${bot.name}):`, err)
-            }
-          }, delay)
+        // ── Round 2 (14–35s): Accuse / agree / react ───────────────────────
+        if (accuserPersonalities.has(personality)) {
+          const d = 14000 + Math.random() * 18000
+          this.schedBotChat(bot.sessionId, pDef.lines.accuse, d, suspectName)
+        } else if (agreeerPersonalities.has(personality)) {
+          const d = 18000 + Math.random() * 16000
+          this.schedBotChat(bot.sessionId, pDef.lines.agree, d, suspectName)
         }
 
-        // Schedule bot vote
+        // ── Round 3 (28–50s): Suspect defends, others go wild ──────────────
+        if (mainSuspect && bot.sessionId === mainSuspect.sessionId) {
+          // Main suspect defends themselves
+          const d = 26000 + Math.random() * 14000
+          this.schedBotChat(bot.sessionId, pDef.lines.defend, d, suspectName)
+        } else if (['chaotic', 'paranoid', 'conspiracy_theorist'].includes(personality)) {
+          const d = 32000 + Math.random() * 16000
+          this.schedBotChat(bot.sessionId, pDef.lines.wild, d, suspectName)
+        } else if (Math.random() < 0.35) {
+          // Random chance for others to pile on or agree
+          const d = 36000 + Math.random() * 14000
+          const pool = Math.random() < 0.5 ? pDef.lines.agree : pDef.lines.accuse
+          this.schedBotChat(bot.sessionId, pool, d, suspectName)
+        }
+
+        // ── Vote scheduling (per personality timing) ────────────────────────
         const [minVote, maxVote] = pDef.voteDelay
         const voteDelay = minVote + Math.random() * (maxVote - minVote)
-        this.clock.setTimeout(() => {
-          this.castBotVote(bot.sessionId)
-        }, voteDelay)
+        this.clock.setTimeout(() => this.castBotVote(bot.sessionId), voteDelay)
       }
     } catch (err) {
       console.error('[GameRoom.scheduleBotMeetingChat] Error:', err)
@@ -799,6 +930,15 @@ export class GameRoom extends Room<GameState> {
       }
 
       this.votes.set(sessionId, target)
+
+      // Broadcast vote cast for spectator visualization
+      const vTarget2 = this.state.players.get(target)
+      this.broadcast('vote_cast', {
+        voterName:       player.name,
+        voterSessionId:  sessionId,
+        targetName:      target === 'skip' ? 'skip' : (vTarget2?.name ?? 'skip'),
+        targetSessionId: target,
+      })
 
       // Announce vote via chat (from vote lines)
       const voteLines = pDef.lines.vote
@@ -905,46 +1045,96 @@ export class GameRoom extends Room<GameState> {
     try {
       if (this.state.phase !== 'game') return
       const now = Date.now()
+      // Walking speed: 0.4 units per tick at 200ms = 2 units/sec
+      const WALK_SPEED = 0.4
 
       for (const [sessionId, ai] of this.botAI) {
         try {
           const player = this.state.players.get(sessionId)
           if (!player || player.isEliminated) continue
 
-          if (ai.mode === 'wander' || now > ai.workUntil) {
-            // Find an incomplete station for a task assigned to this bot
+          // Work mode: waiting for scheduled completeTask timer — do nothing
+          if (ai.mode === 'work') continue
+
+          // Not ready yet (staggered start or post-task cooldown)
+          if (now < ai.nextActionAt) continue
+
+          // ── Travel mode: walk toward target station ──────────────────────
+          if (ai.mode === 'travel') {
+            if (!ai.targetStation) { ai.mode = 'wander'; continue }
+
+            // Check station still completable (another bot may have beaten us)
+            const st = this.stations.get(ai.targetStation)
+            if (!st || st.completedBy) { ai.mode = 'wander'; ai.targetStation = null; continue }
+
+            const dx   = ai.targetX - player.x
+            const dz   = ai.targetZ - player.z
+            const dist = Math.sqrt(dx * dx + dz * dz)
+
+            if (dist < 0.8) {
+              // Arrived — snap to exact position and start working
+              player.x     = ai.targetX
+              player.z     = ai.targetZ
+              // floor was already set when we started traveling
+              ai.mode = 'work'
+
+              const allTaskDefs = [...TASK_DEFS, ...AI_TASK_DEFS]
+              const holdMs = allTaskDefs.find(t => t.id === st.info.taskId)?.holdMs ?? 5000
+
+              this.holdState.set(sessionId, { stationId: ai.targetStation, startedAt: now, holdMs })
+
+              const stationId = ai.targetStation
+              this.clock.setTimeout(() => {
+                this.completeTask(sessionId, stationId)
+                this.holdState.delete(sessionId)
+                // Always reset state after timer fires (task may have been stolen)
+                ai.mode          = 'wander'
+                ai.targetStation = null
+                // Break time between tasks: 10-30s
+                ai.nextActionAt  = Date.now() + 10000 + Math.random() * 20000
+              }, holdMs)
+            } else {
+              // Keep walking toward target with wall-sliding collision
+              const speed  = Math.min(WALK_SPEED, dist)
+              const moveX  = (dx / dist) * speed
+              const moveZ  = (dz / dist) * speed
+              const nextX  = player.x + moveX
+              const nextZ  = player.z + moveZ
+              const md     = this.mapData
+              if (md) {
+                const { grids, gridW, gridH } = md
+                const fl = player.floor
+                if      (isWalkable(nextX, nextZ, fl, grids, gridW, gridH)) { player.x = nextX; player.z = nextZ }
+                else if (isWalkable(nextX, player.z, fl, grids, gridW, gridH)) { player.x = nextX }
+                else if (isWalkable(player.x, nextZ, fl, grids, gridW, gridH)) { player.z = nextZ }
+                // else fully blocked — stay in place (will try again next tick)
+              } else {
+                player.x = nextX
+                player.z = nextZ
+              }
+              player.facing = Math.atan2(dx, dz)
+            }
+            continue
+          }
+
+          // ── Wander mode: find next incomplete task ───────────────────────
+          if (ai.mode === 'wander') {
             const botTasks = this.assignedTasks.get(sessionId) ?? []
-            const stationList = Array.from(this.stations.values())
-            const available = stationList.filter(st =>
+            const available = Array.from(this.stations.values()).filter(st =>
               st.info.taskId &&
               botTasks.includes(st.info.taskId as TaskId) &&
               !st.completedBy
             )
             if (available.length > 0) {
-              const target = available[Math.floor(Math.random() * available.length)]
-              ai.mode          = 'work'
+              const target     = available[Math.floor(Math.random() * available.length)]
+              ai.mode          = 'travel'
               ai.targetStation = target.info.stationId
-              const allTaskDefs2 = [...TASK_DEFS, ...AI_TASK_DEFS]
-              const holdMs = allTaskDefs2.find(t => t.id === target.info.taskId)?.holdMs ?? 5000
-              ai.workUntil     = now + holdMs + 2000
-
-              // Teleport bot to station (server-authoritative position)
-              player.x     = target.info.x
-              player.z     = target.info.z
+              ai.targetX       = target.info.x
+              ai.targetZ       = target.info.z
+              // Teleport to correct floor immediately (x/z movement happens over time)
               player.floor = target.info.floor
-
-              // Queue completion
-              this.holdState.set(sessionId, {
-                stationId: target.info.stationId,
-                startedAt: now,
-                holdMs,
-              })
-              this.clock.setTimeout(() => {
-                this.completeTask(sessionId, target.info.stationId)
-              }, holdMs)
-            } else {
-              ai.mode = 'wander'
             }
+            // else: no tasks left — idle until sprint ends
           }
         } catch (botErr) {
           console.error(`[GameRoom] Bot ${sessionId} tick error:`, botErr)
@@ -952,6 +1142,40 @@ export class GameRoom extends Room<GameState> {
       }
     } catch (err) {
       console.error('[GameRoom.tickBots] Error:', err)
+    }
+  }
+
+  // ── In-game bot banter ─────────────────────────────────────────────────────
+
+  private scheduleGameBanter() {
+    try {
+      const bots = Array.from(this.state.players.values()).filter(p => p.isBot && !p.isEliminated)
+      for (const bot of bots) {
+        const personality = this.botPersonalities.get(bot.sessionId)
+        if (!personality) continue
+        // 1-2 messages spread across the sprint (not too spammy)
+        const count = 1 + Math.floor(Math.random() * 2)
+        for (let i = 0; i < count; i++) {
+          // Spread between 30s and 150s into the sprint
+          const delay = 30000 + Math.random() * 120000
+          const sessionId = bot.sessionId
+          this.clock.setTimeout(() => {
+            if (this.state.phase !== 'game') return
+            const p = this.state.players.get(sessionId)
+            if (!p || p.isEliminated) return
+            const def   = PERSONALITIES[personality]
+            const lines = def.lines.banter
+            if (!lines?.length) return
+            const text = fillTemplate(
+              lines[Math.floor(Math.random() * lines.length)],
+              { self: p.name },
+            )
+            this.broadcast('chat', { senderId: sessionId, name: p.name, text })
+          }, delay)
+        }
+      }
+    } catch (err) {
+      console.error('[GameRoom.scheduleGameBanter] Error:', err)
     }
   }
 }

@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls, Text, Billboard } from '@react-three/drei'
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import * as THREE from 'three'
 import { useGameRoom } from '../store/useGameRoom'
@@ -292,10 +292,14 @@ function Workstation({
 const _v3 = new THREE.Vector3()
 
 function PlayerMesh({
-  x, z, floor: pFloor, facing, isLocal, isEliminated,
+  x, z, floor: pFloor, facing, isLocal, isEliminated, name, isBot,
+  speechBubble, voteIndicator,
 }: {
   x: number; z: number; floor: number; facing: number
   isLocal: boolean; isEliminated?: boolean
+  name?: string; isBot?: boolean
+  speechBubble?: string
+  voteIndicator?: string   // e.g. "→ Dave" or "⏭ skip"
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const floorY   = pFloor * FLOOR_HEIGHT
@@ -324,8 +328,93 @@ function PlayerMesh({
         <sphereGeometry args={[0.07, 6, 6]} />
         <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={1} />
       </mesh>
+      {/* Floating name tag — always faces the camera */}
+      {name && (
+        <Billboard position={[0, 2.4, 0]} follow={true}>
+          <Text
+            fontSize={0.32}
+            color={isBot ? '#fbbf24' : (isLocal ? '#c4b5fd' : '#93c5fd')}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {name}
+          </Text>
+        </Billboard>
+      )}
+      {/* Speech bubble — shown during meeting chat */}
+      {speechBubble && (
+        <Billboard position={[0, 3.15, 0]} follow={true}>
+          <mesh position={[0, 0, -0.04]}>
+            <planeGeometry args={[Math.min(6.5, speechBubble.length * 0.165 + 0.6), 0.72]} />
+            <meshBasicMaterial color="#0d0d24" transparent opacity={0.88} />
+          </mesh>
+          <Text
+            fontSize={0.25} color="#e2e8f0"
+            anchorX="center" anchorY="middle"
+            maxWidth={6} textAlign="center"
+          >
+            {speechBubble}
+          </Text>
+        </Billboard>
+      )}
+      {/* Vote indicator — briefly shown when this player casts a vote */}
+      {voteIndicator && (
+        <Billboard position={[0, speechBubble ? 4.1 : 3.15, 0]} follow={true}>
+          <Text
+            fontSize={0.38} color="#f59e0b"
+            anchorX="center" anchorY="middle"
+          >
+            {voteIndicator}
+          </Text>
+        </Billboard>
+      )}
     </group>
   )
+}
+
+// ── Meeting room table + atmosphere ───────────────────────────────────────────
+function MeetingTable() {
+  return (
+    <group position={[0, 0, 0]}>
+      {/* Table top */}
+      <mesh position={[0, 0.65, 0]} receiveShadow castShadow>
+        <cylinderGeometry args={[2.6, 2.8, 0.14, 32]} />
+        <meshStandardMaterial color="#12101e" emissive="#1a1232" emissiveIntensity={0.5} roughness={0.4} metalness={0.6} />
+      </mesh>
+      {/* Table leg */}
+      <mesh position={[0, 0.32, 0]}>
+        <cylinderGeometry args={[0.18, 0.24, 0.65, 16]} />
+        <meshStandardMaterial color="#0a0910" roughness={0.8} />
+      </mesh>
+      {/* Ambient glow under table */}
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[2.2, 32]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.06} />
+      </mesh>
+      {/* Overhead spotlight */}
+      <pointLight position={[0, 5, 0]} intensity={5} distance={14} decay={2} color="#f5c542" castShadow={false} />
+      {/* Subtle ring on floor */}
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[4.0, 4.3, 48]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.12} />
+      </mesh>
+    </group>
+  )
+}
+
+// ── Meeting room camera ────────────────────────────────────────────────────────
+const _meetLook    = new THREE.Vector3()
+const _meetDesired = new THREE.Vector3()
+
+function MeetingCamera({ center }: { center: { x: number; z: number } }) {
+  const { camera } = useThree()
+  useFrame(() => {
+    _meetDesired.set(center.x, 15, center.z + 13)
+    _meetLook.set(center.x, 0.5, center.z)
+    camera.position.lerp(_meetDesired, 0.06)
+    camera.lookAt(_meetLook)
+  })
+  return null
 }
 
 // ── Body marker ───────────────────────────────────────────────────────────────
@@ -533,6 +622,7 @@ function LocalPlayerController({
 // ── Scene ─────────────────────────────────────────────────────────────────────
 function Scene({
   onNearStation, onNearBody, onZoneChange, gameOver, spectate, spectateTarget,
+  meetingActive, speechBubbles, voteIndicators,
 }: {
   onNearStation:  (st: StationInfo | null) => void
   onNearBody:     (body: BodyInfo | null) => void
@@ -540,6 +630,9 @@ function Scene({
   gameOver:       boolean
   spectate:       boolean
   spectateTarget: string | null
+  meetingActive:  boolean
+  speechBubbles:  Record<string, string>
+  voteIndicators: Record<string, string>
 }) {
   const { players, room, stations, completedTasks, holdingStationId } = useGameRoom()
   const myAssignedTasks = useGameRoom(s => s.myAssignedTasks)
@@ -579,6 +672,31 @@ function Scene({
     })) : []
   , [mapData])
 
+  // Meeting room center: the floor-0 room whose world-centre is closest to map origin
+  const meetingCenter = useMemo<{ x: number; z: number }>(() => {
+    if (!mapData) return { x: 0, z: 0 }
+    const floor0 = mapData.rooms.filter(r => r.floor === 0)
+    if (floor0.length === 0) return { x: 0, z: 0 }
+    const closest = floor0.reduce((best, r) => (
+      r.wcx * r.wcx + r.wcz * r.wcz < best.wcx * best.wcx + best.wcz * best.wcz ? r : best
+    ))
+    return { x: closest.wcx, z: closest.wcz }
+  }, [mapData])
+
+  // Meeting circle positions — computed once when meeting starts, stable during meeting
+  const MEETING_RADIUS = 4.5
+  const meetingPosMap = useMemo<Record<string, { x: number; z: number }>>(() => {
+    if (!meetingActive) return {}
+    const living = players.filter(p => !p.isSpectator && !p.isEliminated)
+    return Object.fromEntries(living.map((p, i) => {
+      const angle = (i / living.length) * Math.PI * 2
+      return [p.sessionId, {
+        x: meetingCenter.x + Math.sin(angle) * MEETING_RADIUS,
+        z: meetingCenter.z + Math.cos(angle) * MEETING_RADIUS,
+      }]
+    }))
+  }, [meetingActive, meetingCenter]) // meetingCenter is stable (mapData never changes at runtime)
+
   // Light switch handler (debounced, called by LocalPlayerController proximity)
   const handleSwitchToggle = useCallback((zone: string) => {
     const now = Date.now()
@@ -589,9 +707,14 @@ function Scene({
 
   const [nearBodyState, setNearBodyState] = useState<BodyInfo | null>(null)
 
-  // Track local floor for rendering
+  // Track floor for rendering: follow spectate target in spectate mode, local floor otherwise
   useFrame(() => {
-    if (renderFloor !== localFloor) setRenderFloor(localFloor)
+    let targetFloor = localFloor
+    if (spectate && spectateTarget) {
+      const target = useGameRoom.getState().players.find(p => p.sessionId === spectateTarget)
+      if (target != null) targetFloor = target.floor ?? 0
+    }
+    if (renderFloor !== targetFloor) setRenderFloor(targetFloor)
   })
 
   useEffect(() => {
@@ -610,6 +733,7 @@ function Scene({
           connected:    p.connected ?? true,
           isBot:        p.isBot        ?? false,
           isEliminated: p.isEliminated ?? false,
+          isSpectator:  p.isSpectator  ?? false,
           allHandsLeft: p.allHandsLeft ?? 2,
         }))
       )
@@ -661,10 +785,11 @@ function Scene({
       <ambientLight intensity={0.45} color="#8080cc" />
       <directionalLight position={[20, 30, 20]} intensity={0.6} castShadow={false} />
 
-      {/* Camera: spectator free, spectator follow, or player follow */}
-      {spectate && spectateTarget && <SpectatorFollowCamera targetId={spectateTarget} />}
-      {spectate && !spectateTarget && <OrbitControls enableDamping dampingFactor={0.08} />}
-      {!spectate && <FollowCamera currentFloor={renderFloor} />}
+      {/* Camera: meeting room → spectator follow → spectator free → player follow */}
+      {meetingActive  && <MeetingCamera center={meetingCenter} />}
+      {!meetingActive && spectate && spectateTarget && <SpectatorFollowCamera targetId={spectateTarget} />}
+      {!meetingActive && spectate && !spectateTarget && <OrbitControls enableDamping dampingFactor={0.08} />}
+      {!meetingActive && !spectate && <FollowCamera currentFloor={renderFloor} />}
 
       {/* Grid + lights */}
       {mapData && (
@@ -694,13 +819,31 @@ function Scene({
         )
       })}
 
+      {/* Meeting room table — visible during all-hands */}
+      {meetingActive && (
+        <group position={[meetingCenter.x, 0, meetingCenter.z]}>
+          <MeetingTable />
+        </group>
+      )}
+
       {/* Remote players */}
-      {players.filter(p => p.sessionId !== mySessionId).map(p => (
-        <PlayerMesh key={p.sessionId}
-          x={p.x} z={p.z} floor={p.floor} facing={p.facing}
-          isLocal={false} isEliminated={p.isEliminated}
-        />
-      ))}
+      {players.filter(p => p.sessionId !== mySessionId && !p.isSpectator).map(p => {
+        const mPos = meetingActive
+          ? (meetingPosMap[p.sessionId] ?? { x: meetingCenter.x, z: meetingCenter.z })
+          : undefined
+        return (
+          <PlayerMesh key={p.sessionId}
+            x={mPos ? mPos.x : p.x}
+            z={mPos ? mPos.z : p.z}
+            floor={meetingActive ? 0 : p.floor}
+            facing={p.facing}
+            isLocal={false} isEliminated={p.isEliminated}
+            name={p.name} isBot={p.isBot}
+            speechBubble={speechBubbles[p.sessionId]}
+            voteIndicator={voteIndicators[p.sessionId]}
+          />
+        )
+      })}
 
       {/* Bodies on current floor */}
       {bodies.filter(b => b.floor === renderFloor).map(b => (
@@ -731,9 +874,16 @@ export interface GameWorldProps {
   gameOver?:       boolean
   spectate?:       boolean
   spectateTarget?: string | null
+  meetingActive?:  boolean
+  speechBubbles?:  Record<string, string>
+  voteIndicators?: Record<string, string>
 }
 
-export default function GameWorld({ onNearStation, onNearBody, onZoneChange, gameOver = false, spectate = false, spectateTarget = null }: GameWorldProps) {
+export default function GameWorld({
+  onNearStation, onNearBody, onZoneChange,
+  gameOver = false, spectate = false, spectateTarget = null,
+  meetingActive = false, speechBubbles = {}, voteIndicators = {},
+}: GameWorldProps) {
   return (
     <Canvas
       shadows
@@ -747,6 +897,9 @@ export default function GameWorld({ onNearStation, onNearBody, onZoneChange, gam
         gameOver={gameOver}
         spectate={spectate}
         spectateTarget={spectateTarget}
+        meetingActive={meetingActive}
+        speechBubbles={speechBubbles}
+        voteIndicators={voteIndicators}
       />
     </Canvas>
   )

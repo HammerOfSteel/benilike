@@ -56,6 +56,8 @@ interface GameRoomStore {
   mapSize:            'small' | 'medium' | 'large'
   isSpectator:        boolean
   spectateTarget:     string | null
+  aiRevealedId:       string | null
+  aiRevealedTasks:    TaskId[]
 
   setRoom:            (room: Room) => void
   setRole:            (role: PlayerRole, assignedTasks: TaskId[]) => void
@@ -75,6 +77,7 @@ interface GameRoomStore {
   setMapConfig:       (seed: string, size: 'small' | 'medium' | 'large') => void
   setSpectator:       (isSpectator: boolean) => void
   setSpectateTarget:  (sessionId: string | null) => void
+  setAiRevealed:      (sessionId: string, tasks: TaskId[]) => void
   clearRoom:          () => void
 }
 
@@ -100,6 +103,8 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   mapSize:          'small' as const,
   isSpectator:      false,
   spectateTarget:   null,
+  aiRevealedId:     null,
+  aiRevealedTasks:  [],
 
   setRoom:          (room) => set({ room }),
   setRole:          (myRole, myAssignedTasks) => set({ myRole, myAssignedTasks }),
@@ -128,13 +133,20 @@ export const useGameRoom = create<GameRoomStore>((set) => ({
   setSprint:        (sprint) => set({ sprint }),
   setRetroData:     (retroData) => set({ retroData }),
   setMapConfig:     (mapSeed, mapSize) => set({ mapSeed, mapSize }),
-  setSpectator:     (isSpectator) => set({ isSpectator }),
+  setSpectator:     (isSpectator) => {
+    console.log(`[BENI:store] setSpectator(${isSpectator})`)
+    set({ isSpectator })
+  },
   setSpectateTarget:(spectateTarget) => set({ spectateTarget }),
-  clearRoom:        () => set({
-    room: null, myRole: null, myAssignedTasks: [], myIsAi: false,
-    aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
-    stations: [], completedTasks: new Set(), holdingStationId: null,
-    holdStartedAt: 0, toasts: [], bodies: [], sprint: null, retroData: null,
-    isSpectator: false, spectateTarget: null,
-  }),
+  setAiRevealed:    (aiRevealedId, aiRevealedTasks) => set({ aiRevealedId, aiRevealedTasks }),
+  clearRoom:        () => {
+    console.log('[BENI:store] clearRoom() called — isSpectator → false')
+    set({
+      room: null, myRole: null, myAssignedTasks: [], myIsAi: false,
+      aiPhase: 0, aiPhaseTasks: [], players: [], incidents: [], gameEnd: null,
+      stations: [], completedTasks: new Set(), holdingStationId: null,
+      holdStartedAt: 0, toasts: [], bodies: [], sprint: null, retroData: null,
+      isSpectator: false, spectateTarget: null, aiRevealedId: null, aiRevealedTasks: [],
+    })
+  },
 }))

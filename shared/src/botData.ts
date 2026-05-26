@@ -67,6 +67,7 @@ export interface PersonalityDef {
     agree:     string[]
     wild:      string[]
     vote:      string[]   // {name} = who they voted for
+    banter:    string[]   // in-game chat during work phase, {self} = own name
   }
 }
 
@@ -117,6 +118,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         '{name} — nothing personal, it\'s purely a strategic resource reallocation.',
         'I\'m putting my vote on {name}. We need to optimise team composition.',
       ],
+      banter: [
+        'Just circling back on my task pipeline. Bandwidth is fully allocated.',
+        'Quick heads up: I\'m in the {self} zone of productivity right now. Do not disturb.',
+        'Completed a deliverable. Cascading the output through the relevant channels.',
+        'Is this in Jira? I\'m not seeing this in Jira.',
+        'I\'m going to take a proactive approach and touch base with the relevant stakeholders.',
+        'Per my last action item, I am deep in execution mode. Very busy. Very aligned.',
+      ],
     },
   },
 
@@ -162,6 +171,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'Voting {name}. My gut has never been wrong. Except twice. But not today.',
         'It\'s {name}. I know it\'s {name}. I\'ve known for three sprints.',
         '{name}. Final answer. If I\'m wrong I\'ll eat my lanyard.',
+      ],
+      banter: [
+        'I\'ve been watching. All of you. The entire sprint.',
+        'Did that door just open? Who opened that door. Why.',
+        'Someone walked past me twice. Same direction. That\'s a pattern.',
+        'I don\'t want to alarm anyone but I\'m alarmed.',
+        'Staying visible. If anyone needs to know where I am, I\'m HERE.',
+        'The lights flickered. Why did the lights flicker. I\'m logging this.',
       ],
     },
   },
@@ -209,6 +226,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         '{name}. It fits the pattern. I have a diagram. I don\'t have it here.',
         'I vote {name} based on a gut instinct I developed from hours of analysis.',
       ],
+      banter: [
+        'The sprint quota was not chosen randomly. I need everyone to understand that.',
+        'Why is this zone called what it\'s called? Who named it. Why that name.',
+        'I\'ve been counting footsteps. The numbers are wrong.',
+        'The building has more rooms than are on the map. I\'ve checked.',
+        'Every time I complete a task something else happens somewhere. Correlation.',
+        'I\'m not saying this is a test. I\'m just saying: what if this is a test.',
+      ],
     },
   },
 
@@ -253,6 +278,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'I\'m going with {name}, and I fully support however everyone else votes too.',
         'Voting {name} because I think that\'s what the group wants and I want to honour that.',
         'My vote is {name}, though I want {name} to know it\'s not personal at all.',
+      ],
+      banter: [
+        'Just wanted to say everyone is doing such a great job this sprint!',
+        'If anyone needs a hand with anything I am absolutely here and happy to help.',
+        'Love the energy in this office today. Very productive.',
+        'Has anyone eaten? You should eat. Self-care is important during a sprint.',
+        'Not to be that person but the vibe is really good right now and I\'m grateful.',
+        'Amazing work everyone. Truly. You\'re all so capable.',
       ],
     },
   },
@@ -300,6 +333,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         '{name}. And that\'s all I\'m saying. The rest is just my sources.',
         'Voting {name}. I\'ve been sitting on this for forty seconds and it\'s time.',
       ],
+      banter: [
+        'Not to spread anything but I heard something very interesting earlier.',
+        'I\'m keeping notes. Just so everyone knows. Detailed notes.',
+        'Someone in this building said something I\'m choosing not to repeat. For now.',
+        'Between you and me — actually never mind. I\'ll save it for the meeting.',
+        'The server room smells different today. I\'m just saying.',
+        'I know things. I always know things. That\'s my whole thing.',
+      ],
     },
   },
 
@@ -345,6 +386,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'Voting {name}. Evidence confidence: seventy-two percent. That\'s enough for me.',
         'My vote is {name}. If I\'m wrong, I\'ll revise my model accordingly.',
         '{name}. This is based on observation, not emotion. I want to be clear about that.',
+      ],
+      banter: [
+        'Task one complete. Proceeding to task two as planned. All nominal.',
+        'Efficiency at eighty-seven percent. Acceptable. Continuing.',
+        'Cross-referencing task locations against optimal route. Recalculating.',
+        'Logging: current zone, task status, time elapsed. Everything within parameters.',
+        'Deviation detected in expected workflow. Investigating. Will report.',
+        'I would like everyone to know I have completed exactly what I said I would complete.',
       ],
     },
   },
@@ -395,6 +444,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'I vote {name} because I spun in a circle and pointed.',
         '{name}. Final. Unless I change my mind in the next five seconds. Okay I haven\'t.',
       ],
+      banter: [
+        'I went to the wrong zone again. It\'s fine. I\'m fine.',
+        'WAIT is there a faster route or have I been going the long way this whole time',
+        'I just completed something. I don\'t know what. It beeped. I\'m calling it a win.',
+        'okay here\'s a question: what if I just didn\'t do my tasks. hypothetically.',
+        'I\'m in the server room and I don\'t know how I got here.',
+        'never mind I found it. I\'m in the zone. I am ON it. Watch me.',
+      ],
     },
   },
 
@@ -441,6 +498,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         '{name}. Sorry if that\'s wrong. I don\'t really understand the system.',
         'Voting {name}. I think. Is this how voting works?',
       ],
+      banter: [
+        'Which zone am I supposed to be in? I keep forgetting.',
+        'I finished something but I\'m not sure if it was my task or someone else\'s.',
+        'Is the blinking light normal? It\'s been blinking. I assumed that was normal.',
+        'I got lost but I think I\'m somewhere useful now so that\'s fine.',
+        'Sorry was that my task? I completed it. I hope that was mine.',
+        'I\'ve been very productive I think. It\'s hard to tell from inside the experience.',
+      ],
     },
   },
 
@@ -486,6 +551,14 @@ export const PERSONALITIES: Record<BotPersonality, PersonalityDef> = {
         'Voting {name}. Purely statistical. No other reason. Definitely no other reason.',
         'My vote is {name}. The logic is sound. I stand by it completely.',
         '{name}. I\'ve been watching everyone very carefully. Trust my assessment.',
+      ],
+      banter: [
+        'Maintaining optimal productivity. Human-adjacent behaviour confirmed.',
+        'I find the layout of this office... adequate. For biological workspaces.',
+        'Task complete. Simulating satisfaction. It is convincing.',
+        'Your collective output is within acceptable parameters. For now.',
+        'I have been here the entire time. As humans do. Working. Like a human.',
+        'Curious how the quota always aligns with my secondary objectives.',
       ],
     },
   },
