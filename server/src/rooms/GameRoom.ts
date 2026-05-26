@@ -214,8 +214,8 @@ export class GameRoom extends Room<GameState> {
         const md = generateMapData(seed, mapSize)
         this.mapData = md
 
-        // Build station list from map
-        const stationList = assignStations(seed, mapSize, TASK_DEFS, md)
+        // Build station list from map — include AI task stations so the rogue bot can complete them
+        const stationList = assignStations(seed, mapSize, [...TASK_DEFS, ...AI_TASK_DEFS], md)
         for (const info of stationList) {
           this.stations.set(info.stationId, { info, completedBy: null })
         }
@@ -689,14 +689,14 @@ export class GameRoom extends Room<GameState> {
       // Schedule bot meeting chat
       this.scheduleBotMeetingChat()
 
-      // 60-second auto-resolve (then bots vote if they haven't)
+      // 45-second auto-resolve — matches the client countdown timer
       if (this.allHandsTimeout) this.allHandsTimeout.clear()
       this.allHandsTimeout = this.clock.setTimeout(() => {
         if (this.state.phase === 'meeting') {
-          this.scheduleBotVotes(0)  // immediate votes
+          this.scheduleBotVotes(0)  // immediate votes for any who haven't yet
           this.clock.setTimeout(() => this.resolveVote(), 3000)
         }
-      }, 60_000)
+      }, 45_000)
     } catch (err) {
       console.error('[GameRoom.triggerAllHands] Error:', err)
     }
@@ -737,10 +737,17 @@ export class GameRoom extends Room<GameState> {
         }
       }
 
+      // Build a name → name vote map for display
+      const namedVotes: Record<string, string> = {}
+      for (const [voterId, targetId] of this.votes) {
+        const vName  = this.state.players.get(voterId)?.name ?? voterId
+        const tName  = targetId === 'skip' ? 'skip' : (this.state.players.get(targetId)?.name ?? targetId)
+        namedVotes[vName] = tName
+      }
       this.broadcast('all_hands_vote_result', {
         ejected,
         wasAi,
-        votes: Object.fromEntries(this.votes),
+        votes: namedVotes,
       })
 
       this.votes.clear()

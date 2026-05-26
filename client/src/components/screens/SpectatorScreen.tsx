@@ -11,7 +11,7 @@ interface Props { onNavigate: (s: Screen) => void }
 export default function SpectatorScreen({ onNavigate }: Props) {
   const {
     room, players, sprint, toasts, stations, completedTasks,
-    spectateTarget, setSpectateTarget, clearRoom,
+    spectateTarget, setSpectateTarget, clearRoom, gameEnd,
     aiRevealedId: storeAiRevealedId, aiRevealedTasks: storeAiRevealedTasks,
   } = useGameRoom()
 
@@ -148,6 +148,8 @@ export default function SpectatorScreen({ onNavigate }: Props) {
       if (d.targetName !== 'skip') {
         setLiveTally(prev => ({ ...prev, [d.targetName]: (prev[d.targetName] ?? 0) + 1 }))
       }
+      // Switch to voting phase as soon as first vote arrives (don't wait for timer)
+      setMeetingPhase(p => p === 'chat' ? 'voting' : p)
       // Show vote indicator above voter in 3D
       const indicator = d.targetName === 'skip' ? '⏭ skip' : `→ ${d.targetName}`
       if (voteTimeouts.current[d.voterSessionId]) clearTimeout(voteTimeouts.current[d.voterSessionId])
@@ -589,7 +591,7 @@ export default function SpectatorScreen({ onNavigate }: Props) {
           <div style={{ padding: '0.2rem 0.75rem', color: 'rgba(255,255,255,0.2)', fontSize: '0.6rem', letterSpacing: '0.1em' }}>
             CHAT
           </div>
-          <div ref={chatRef} style={{ maxHeight: 150, overflowY: 'auto', padding: '0 0.5rem' }}>
+          <div ref={chatRef} style={{ maxHeight: 150, overflowY: 'auto', padding: '0 0.5rem 0.5rem' }}>
             {chatLog.length === 0 && (
               <div style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.62rem', padding: '0.2rem' }}>
                 // no chat yet
@@ -608,7 +610,7 @@ export default function SpectatorScreen({ onNavigate }: Props) {
 
       {/* ── Floating chat feed overlay (bottom-centre, always visible) ────── */}
       <div style={{
-        position: 'absolute', bottom: '1.5rem',
+        position: 'absolute', bottom: '3rem',
         left: '50%', transform: 'translateX(-50%)',
         width: 420, maxWidth: 'calc(100vw - 320px)',
         zIndex: 25, pointerEvents: 'none',
@@ -891,6 +893,48 @@ export default function SpectatorScreen({ onNavigate }: Props) {
             boxShadow: '0 0 30px rgba(245,158,11,0.15)',
           }}>
             {sprintMasterMsg}
+          </div>
+        </div>
+      )}
+
+      {/* ── Game end overlay ────────────────────────────────────── */}
+      {gameEnd && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 80,
+          background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(4px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'var(--font-mono)',
+        }}>
+          <div style={{
+            border: `1px solid ${gameEnd.winner === 'workforce' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+            background: 'rgba(5,5,15,0.97)',
+            padding: '2.5rem 3rem', maxWidth: 500, textAlign: 'center',
+            boxShadow: `0 0 40px ${gameEnd.winner === 'workforce' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
+          }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>
+              {gameEnd.winner === 'workforce' ? '✅' : '🤖'}
+            </div>
+            <div style={{
+              fontSize: '1.2rem', fontWeight: 700, letterSpacing: '0.12em', marginBottom: '0.5rem',
+              color: gameEnd.winner === 'workforce' ? '#4ade80' : '#ef4444',
+            }}>
+              {gameEnd.winner === 'workforce' ? 'WORKFORCE WINS' : 'ROGUE AI WINS'}
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', marginBottom: '2rem', lineHeight: 1.5 }}>
+              {gameEnd.reason}
+            </div>
+            <button
+              onClick={() => { clearRoom(); onNavigate('main-menu') }}
+              style={{
+                background: 'transparent',
+                border: `1px solid ${gameEnd.winner === 'workforce' ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'}`,
+                color: gameEnd.winner === 'workforce' ? '#4ade80' : '#ef4444',
+                padding: '0.6rem 2rem', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: '0.78rem', letterSpacing: '0.1em',
+              }}
+            >
+              BACK TO MENU
+            </button>
           </div>
         </div>
       )}

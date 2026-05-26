@@ -288,6 +288,30 @@ function Workstation({
   )
 }
 
+// ── Vote indicator with fade-in / fade-out ────────────────────────────────────
+function VoteIndicatorBillboard({ text, aboveBubble }: { text: string; aboveBubble: boolean }) {
+  const textRef = useRef<any>(null)
+  const mountedAt = useRef(Date.now())
+  const DURATION = 4.0
+
+  useFrame(() => {
+    if (!textRef.current) return
+    const t = (Date.now() - mountedAt.current) / 1000
+    const fadeIn  = 0.35
+    const fadeOut = DURATION - 0.9
+    const op = t < fadeIn ? t / fadeIn : t > fadeOut ? Math.max(0, 1 - (t - fadeOut) / 0.9) : 1
+    textRef.current.fillOpacity = Math.max(0, Math.min(1, op))
+  })
+
+  return (
+    <Billboard position={[0, aboveBubble ? 4.1 : 3.15, 0]} follow>
+      <Text ref={textRef} fontSize={0.38} color="#f59e0b" anchorX="center" anchorY="middle">
+        {text}
+      </Text>
+    </Billboard>
+  )
+}
+
 // ── Player mesh ───────────────────────────────────────────────────────────────
 const _v3 = new THREE.Vector3()
 
@@ -357,16 +381,9 @@ function PlayerMesh({
           </Text>
         </Billboard>
       )}
-      {/* Vote indicator — briefly shown when this player casts a vote */}
+      {/* Vote indicator — fades in then out when this player casts a vote */}
       {voteIndicator && (
-        <Billboard position={[0, speechBubble ? 4.1 : 3.15, 0]} follow={true}>
-          <Text
-            fontSize={0.38} color="#f59e0b"
-            anchorX="center" anchorY="middle"
-          >
-            {voteIndicator}
-          </Text>
-        </Billboard>
+        <VoteIndicatorBillboard key={voteIndicator} text={voteIndicator} aboveBubble={!!speechBubble} />
       )}
     </group>
   )
