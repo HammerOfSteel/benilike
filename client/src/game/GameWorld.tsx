@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard, useGLTF, useAnimations } from '@react-three/drei'
+import { OrbitControls, Text, Billboard, useGLTF } from '@react-three/drei'
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from 'react'
 import * as THREE from 'three'
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -46,6 +46,20 @@ function charIndex(name: string): number {
   return Math.abs(h) % KAYKIT_CHARS.length
 }
 
+// KayKit uses dotted bone names ("lowerarm.l") which Three.js PropertyBinding
+// splits incorrectly. Fix: rename dots in bones + match track names.
+function fixKayKitClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  const tracks = clip.tracks.map(track => {
+    const lastDot  = track.name.lastIndexOf('.')
+    if (lastDot === -1) return track
+    const boneName = track.name.slice(0, lastDot).replace(/\./g, '_') // "lowerarm_l"
+    const prop     = track.name.slice(lastDot + 1)                    // "quaternion"
+    const TC       = track.constructor as any
+    return new TC(boneName + '.' + prop, track.times, track.values, track.getInterpolation())
+  })
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks)
+}
+
 // KayKit animated character: loads character GLB + retargets animation rig clips
 // movingRef drives the idle↔walk transition without triggering React re-renders
 function KayKitCharacter({
@@ -55,16 +69,18 @@ function KayKitCharacter({
   opacity?: number
   movingRef: React.MutableRefObject<boolean>
 }) {
-  const meshRef     = useRef<THREE.Group>(null)
-  const currentAnim = useRef('')
+  const { scene: charScene }      = useGLTF(KAYKIT_CHARS[charIndex(name)])
+  const { animations: moveAnims } = useGLTF(ANIM_MOVEMENT)
+  const { animations: genAnims  } = useGLTF(ANIM_GENERAL)
 
-  const { scene: charScene }           = useGLTF(KAYKIT_CHARS[charIndex(name)])
-  const { animations: moveAnims }      = useGLTF(ANIM_MOVEMENT)
-  const { animations: genAnims  }      = useGLTF(ANIM_GENERAL)
+  // Fix animation clips once per unique animation set (useGLTF caches the originals)
+  const fixedMoveAnims = useMemo(() => moveAnims.map(fixKayKitClip), [moveAnims])
+  const fixedGenAnims  = useMemo(() => genAnims.map(fixKayKitClip),  [genAnims])
 
-  // SkeletonUtils.clone keeps the skinned mesh and bones independent per instance
   const clone = useMemo(() => {
     const c = SkeletonUtils.clone(charScene) as THREE.Group
+    // Rename bones to match fixed track names ("lowerarm.l" → "lowerarm_l")
+    c.traverse(obj => { if (obj.name.includes('.')) obj.name = obj.name.replace(/\./g, '_') })
     if (opacity < 1) {
       c.traverse(obj => {
         if ((obj as THREE.Mesh).isMesh) {
@@ -81,28 +97,35 @@ function KayKitCharacter({
     return c
   }, [charScene, opacity])
 
-  const { actions, mixer } = useAnimations([...moveAnims, ...genAnims], meshRef)
+  const mixerRef    = useRef<THREE.AnimationMixer | null>(null)
+  const actionsRef  = useRef<Record<string, THREE.AnimationAction>>({})
+  const currentAnim = useRef('Idle_A')
 
-  // Start idle once actions are available
+  // Create mixer directly on clone after it's ready — avoids null-root timing issue with useAnimations
   useEffect(() => {
-    if (!actions['Idle_A']) return
-    actions['Idle_A'].reset().play()
+    const mixer = new THREE.AnimationMixer(clone)
+    mixerRef.current = mixer
+    const acts: Record<string, THREE.AnimationAction> = {}
+    for (const clip of [...fixedMoveAnims, ...fixedGenAnims]) {
+      acts[clip.name] = mixer.clipAction(clip)
+    }
+    actionsRef.current = acts
+    acts['Idle_A']?.reset().play()
     currentAnim.current = 'Idle_A'
-  }, [actions])
+    return () => { mixer.stopAllAction() }
+  }, [clone, fixedMoveAnims, fixedGenAnims])
 
   useFrame((_, delta) => {
-    mixer?.update(delta)
-    // Transition between walk and idle based on movement ref (no React re-render)
+    mixerRef.current?.update(delta)
     const target = movingRef.current ? 'Walking_A' : 'Idle_A'
-    if (target !== currentAnim.current && actions[target] && actions[currentAnim.current]) {
-      actions[currentAnim.current]!.fadeOut(0.15)
-      actions[target]!.reset().fadeIn(0.15).play()
+    if (target !== currentAnim.current && actionsRef.current[target]) {
+      actionsRef.current[currentAnim.current]?.fadeOut(0.2)
+      actionsRef.current[target]!.reset().fadeIn(0.2).play()
       currentAnim.current = target
     }
   })
 
-  // KayKit characters face +Z at rest — matches our atan2(dx,dz) convention
-  return <primitive ref={meshRef} object={clone} />
+  return <primitive object={clone} />
 }
 
 // ── Grid renderer (InstancedMesh per floor) ───────────────────────────────────
