@@ -50,6 +50,11 @@ const TAGLINES = [
   'The all-hands meeting has been moved. Again.',
   'Your benefits package is fully intact. Probably.',
   'Payroll will be processed once the intrusion is contained.',
+  'Sprint quota met. The anomaly is pleased.',
+  'One of your colleagues is not who they say they are.',
+  'Please do not approach unattended terminals on Floor 2.',
+  'Body found in Network Closet. HR is investigating.',
+  'Reminder: vote carefully. Wrongful termination has consequences.',
 ]
 
 export default function MainMenu({ onNavigate }: Props) {
@@ -105,7 +110,7 @@ export default function MainMenu({ onNavigate }: Props) {
             <span className={styles.titleAccent}>LIKE</span>
           </h1>
           <div className={styles.titleCursor} aria-hidden />
-          <p className={styles.subtitle}>v0.1.0-alpha · FLOOR 7 UNLOCKED</p>
+          <p className={styles.subtitle}>v0.4.0 · phase-3-assets</p>
         </div>
 
         {/* Tagline */}
@@ -156,15 +161,18 @@ export default function MainMenu({ onNavigate }: Props) {
 }
 
 const INCIDENT_LINES: TerminalLine[] = [
-  { time: '08:52', text: 'Payroll service restarted — IT', type: 'info' },
-  { time: '08:55', text: 'Unauthorised badge scan · Floor 3', type: 'warn' },
-  { time: '09:01', text: 'Terminal BNF-071 compromised', type: 'danger' },
-  { time: '09:04', text: 'HR resolved morale incident #44', type: 'success' },
-  { time: '09:07', text: 'DevOps: pipeline deployment OK', type: 'success' },
-  { time: '09:09', text: '⚠ Intrusion detected — Server Room', type: 'danger' },
-  { time: '09:12', text: 'Marketing campaign interrupted', type: 'warn' },
-  { time: '09:15', text: 'Finance flagged anomalous transfer', type: 'danger' },
-  { time: '09:18', text: 'Admin restored badge access B-Wing', type: 'info' },
+  { time: '08:47', text: 'Sprint 1 started — quota: 12 tasks', type: 'info' },
+  { time: '08:51', text: 'Patch Terminal completed — IT', type: 'success' },
+  { time: '08:54', text: 'Unusual activity · Server Room', type: 'warn' },
+  { time: '08:58', text: 'Sprint quota met — retro vote open', type: 'success' },
+  { time: '09:03', text: '⚠ Body found — Network Closet', type: 'danger' },
+  { time: '09:03', text: 'ALL HANDS called by Pita M.', type: 'warn' },
+  { time: '09:05', text: 'Vote: Kai ejected. They were innocent.', type: 'danger' },
+  { time: '09:08', text: 'Sprint 2 started — quota: 14 tasks', type: 'info' },
+  { time: '09:11', text: 'Analyse Audit Logs completed — ???', type: 'warn' },
+  { time: '09:14', text: '⚠ Body found — Finance Floor', type: 'danger' },
+  { time: '09:14', text: 'ALL HANDS called by Alex R.', type: 'warn' },
+  { time: '09:16', text: 'Vote: Rogue AI ejected. WORKFORCE WINS.', type: 'success' },
 ]
 
 // ── Status board widget ────────────────────────────────────────────────────
@@ -178,24 +186,24 @@ function StatusBoard() {
       </div>
 
       <div className={styles.statusSection}>
-        <div className={styles.statusSectionTitle}>REPUTATION</div>
+        <div className={styles.statusSectionTitle}>SPRINT PROGRESS</div>
         <div className={styles.repBar}>
-          <div className={styles.repFill} style={{ width: '68%' }} />
+          <div className={styles.repFill} style={{ width: '58%' }} />
         </div>
-        <div className={styles.repLabel}>68 / 100 <span style={{ color: 'var(--color-warning)' }}>DEGRADING</span></div>
+        <div className={styles.repLabel}>7 / 12 tasks &nbsp;<span style={{ color: 'var(--color-warning)' }}>SPRINT 2 ACTIVE</span></div>
       </div>
 
       <div className={styles.statusSection}>
-        <div className={styles.statusSectionTitle}>ACTIVE ROLES</div>
+        <div className={styles.statusSectionTitle}>WORKFORCE ROLES</div>
         <div className={styles.roleGrid}>
           {[
-            { role: 'IT', color: '#60A5FA', active: true },
-            { role: 'HR', color: '#A78BFA', active: true },
-            { role: 'DEV', color: '#4ADE80', active: false },
-            { role: 'MKT', color: '#FB923C', active: true },
-            { role: 'FIN', color: '#FBBF24', active: false },
+            { role: 'IT',  color: '#60A5FA', active: true },
+            { role: 'HR',  color: '#A78BFA', active: true },
+            { role: 'DEV', color: '#4ADE80', active: true },
+            { role: 'MKT', color: '#FB923C', active: false },
+            { role: 'FIN', color: '#FBBF24', active: true },
             { role: 'ADM', color: '#E879F9', active: true },
-            { role: 'MGT', color: '#F9A8D4', active: true },
+            { role: 'MGT', color: '#F9A8D4', active: false },
           ].map(({ role, color, active }) => (
             <div key={role} className={`${styles.roleChip} ${active ? '' : styles.roleChipInactive}`} style={{ borderColor: color, color }}>
               {role}
@@ -212,12 +220,12 @@ function StatusBoard() {
       </div>
 
       <div className={styles.statusSection}>
-        <div className={styles.statusSectionTitle}>OBJECTIVES</div>
+        <div className={styles.statusSectionTitle}>ROGUE AI STATUS</div>
         <div className={styles.objectives}>
-          <div className={`${styles.obj} ${styles.objDone}`}>✓ Deploy Payroll Update</div>
-          <div className={`${styles.obj} ${styles.objActive}`}>◉ Submit Q3 Report</div>
-          <div className={`${styles.obj} ${styles.objPending}`}>○ Run Marketing Campaign</div>
-          <div className={`${styles.obj} ${styles.objPending}`}>○ Host All-Hands Meeting</div>
+          <div className={`${styles.obj} ${styles.objDone}`}>✓ Index Personnel Records</div>
+          <div className={`${styles.obj} ${styles.objDone}`}>✓ Analyse Audit Logs</div>
+          <div className={`${styles.obj} ${styles.objActive}`}>◉ Map Network Topology</div>
+          <div className={`${styles.obj} ${styles.objPending}`}>○ Phase 1 Buff: Vote ×2</div>
         </div>
       </div>
     </div>

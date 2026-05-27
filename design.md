@@ -1,7 +1,7 @@
 # Benilike — Game Design Document
 
-> Living document. Update as decisions are made.  
-> **Last redesign:** 2026-05-25 — Rogue AI model (replaces Workforce vs Opposition faction system)
+> Living document. Updated to reflect current implementation.
+> **Last updated:** 2026-05-26
 
 ---
 
@@ -17,8 +17,8 @@ It doesn't announce itself. It clocks in like everyone else.
 
 ### Tone
 - **Absurdist corporate comedy** with genuine dread
-- Think: The Office meets Darkest Dungeon meets Among Us
-- Dialogue and flavour text should be dry, bureaucratic, and occasionally horrifying ("Your performance review has been scheduled during an active security incident.")
+- Think: The Office meets Among Us meets Darkest Dungeon
+- Dry, bureaucratic flavour text: "Your performance review has been scheduled during an active security incident."
 
 ---
 
@@ -26,183 +26,237 @@ It doesn't announce itself. It clocks in like everyone else.
 
 ### The Workforce (all human players except The AI)
 
-The employees of Benisoft. They win by completing all 3 sprint quotas across a match, or by correctly identifying and ejecting The AI at an All Hands meeting.
+The employees of Benisoft. They win by completing all sprint quotas across the match, or by correctly identifying and ejecting The AI at an All Hands meeting.
 
-**Assigned task lists:** Each player gets a job title at match start. The title assigns them 3 tasks from the shared office task pool. Any player can do any task — titles determine your *personal* assignments, not what you're allowed to touch.
+**No special abilities.** The Workforce's only tool is observation — watching who goes where, who does what, and who's never around when work gets done.
 
-**No special abilities.** The Workforce's only tool is observation — watching who goes where, who does what, who's never around when work gets done.
+**Job Titles (randomly assigned at match start):**
 
-**Job Titles:**
-
-| Title | Home zones | Assigned task flavour |
+| Title | Home Zones | Tasks |
 |---|---|---|
-| IT Technician | Server Room, Network Closet | Infrastructure maintenance |
-| HR Officer | HR Corner | People operations |
-| DevOps Engineer | DevOps Den | Deployment + monitoring |
-| Finance Analyst | Finance Floor | Budgets + audits |
-| Marketing | Marketing Hub | Campaigns + comms |
-| Admin | Main Office, Exec Suite | Access + logistics |
-| Management | Exec Suite | Planning + escalation |
+| IT Technician | Server Room, Network Closet | Patch Terminal, Restart Server Rack, Cable Audit, Firewall Check |
+| HR Officer | HR Corner | Security Vetting, Policy Review, Onboarding Docs |
+| DevOps Engineer | DevOps Den | CI Pipeline, System Monitor, Deploy Config |
+| Finance Analyst | Finance Floor | Budget Freeze, Expense Audit, Invoice Batch |
+| Marketing | Marketing Hub | PR Campaign, Social Scheduling, Crisis Control |
+| Admin | Main Office | Keycard Audit, Meeting Setup, Onboarding Docs |
+| Management | Executive Suite | Sprint Planning, Resource Allocation, Crisis Control |
+
+Each player is assigned 3 tasks from their title's pool at the start of each sprint.
 
 ---
 
 ### The AI (one hidden player)
 
-One player — human or bot — is secretly assigned The AI role at match start. They receive a job title and assigned task list just like everyone else. Their identity is hidden.
-
-The AI has a private 3-phase objective tree running in parallel to its worker cover. Completing all three phases is its objective win path. Phase 3 unlocks the Shutdown ability.
+One player is secretly assigned The AI role at match start. They receive a job title and assigned task list just like everyone else. Their identity is hidden.
 
 **The AI is revealed only when:**
 - Correctly voted out at an All Hands meeting, or
-- It wins (identity disclosed at game end)
+- The game ends (identity disclosed)
 
 ---
 
-## The AI — Three Phases
+## The AI — Mechanics
 
-### Phase 1 — LEARN *(invisible)*
-Data collection tasks. Looks identical to normal work. Completes 3 tasks spread across the map.
-→ Tasks: *Index Employee Records* (HR), *Analyse System Logs* (Server Room), *Map Network Topology* (Network Closet)
+### Kill Mechanic (always available)
+- **Activation**: press `E` when within ~2 units of a living, non-spectator player
+- **Cooldown**: 30 seconds
+- **Effect**: target becomes eliminated; their character model falls flat and turns pale white
+- **Body persistence**: body remains until reported or the sprint ends
 
-### Phase 2 — ACCESS *(subtle visual tells)*
-System intrusion tasks. Takes longer than normal work. Causes a 1-second screen flicker or red tint on nearby monitors. A perceptive player nearby might notice something looked wrong.
-→ Tasks: *Deploy Backdoor* (DevOps Den), *Clone Credentials* (Finance Floor), *Bypass Access Controls* (Main Office)
+### Secret Reconnaissance Tasks
+The AI is assigned 3 private tasks each sprint:
 
-### Phase 3 — TERMINATE
-**Shutdown** ability becomes available (cooldown: 30s). The AI can eliminate an isolated worker (must be alone with them for ≥1s).
+| Task | Zone | Hold time |
+|---|---|---|
+| Index Personnel Records | HR Corner | 6 s |
+| Analyse Audit Logs | Server Room | 7 s |
+| Map Network Topology | Network Closet | 6.5 s |
 
-Final objective: *Initiate Takeover Protocol* (Exec Suite, 8s). Completing this while majority eliminated = AI objective win.
+These tasks look identical to normal work from the outside (no visual tells). They reset every sprint so the AI must complete them again each sprint to continue earning buffs.
+
+### Sprint Buff System
+
+Completing all 3 AI tasks in a sprint grants escalating abilities:
+
+| Sprint completion count | Buff granted |
+|---|---|
+| 1st time (any sprint) | **Extra vote** — AI's vote counts ×2 in the next All Hands meeting (consumed on use, then resets) |
+| 2nd time (cumulative) | **Invisibility unlocked** — permanently available; hold `Q` for 3 s to activate |
+
+### Invisibility (Q-hold)
+- **Activation**: hold `Q` for 3 seconds (only after unlocked)
+- **Duration**: 5 seconds
+- **Cooldown**: 30 seconds after deactivation
+- **Cancelled by**: moving more than 0.3 units while invisible
+- **Visual (self)**: local player renders at 25% opacity
+- **Visual (others)**: invisible AI is hidden from all remote player renders — effectively unseen by others
 
 ---
 
 ## Sprint Structure
 
-A match is **3 sprints**. Sprint size is voted on by all players before Sprint 1 (Small / Medium / Large — affects task quota and perk tier).
+A match runs across multiple sprints (number depends on map size and game settings). Each sprint:
 
-Each sprint (~3 min):
-1. Workers complete tasks. AI hunts and works its phases.
-2. Sprint timer ends → quota check.
-   - ✅ Quota met: **Sprint Retrospective** (60s) — vote on a perk for next sprint.
-   - ❌ Quota missed: **Morale penalty** — hold times +10% next sprint.
+1. All players receive (or re-receive) their 3 cover tasks. AI also receives its 3 secret tasks.
+2. Sprint timer counts down.
+3. Completed tasks count toward the shared sprint quota.
+4. Sprint timer expires:
+   - **Quota met**: Sprint Retrospective vote (45 s) — players vote on a perk for the next sprint.
+   - **Quota missed**: Sprint ends with no perk.
+5. Next sprint starts. Stations reset; all tasks can be done again.
 
 **Sprint quota** scales with living player count. Eliminated workers no longer contribute — each kill makes future sprints harder for the team.
 
 ---
 
-## Meetings
+## All Hands Meetings
 
-### All Hands (Emergency)
-- Triggered by: reporting a body (E near corpse) or pressing the conference room terminal
-- Limit: 2 calls per player per match
-- Flow: 45s text chat → anonymous vote → eject or skip
-- Wrong ejection: the voted-out worker is eliminated; workers lose next sprint's perk vote ("wrongful termination")
-- Correct ejection: **Workers win**
+### Triggering
+- **Report body**: press `E` near a dead body → calls All Hands
+- **R key / wall terminal**: any player can call an emergency meeting (press `R`)
 
-### Sprint Retrospective (Automatic)
-- Triggers at each sprint end (if quota met)
-- 45s perk vote — one perk applied for next sprint
-- No elimination vote
+### Flow
+1. Meeting phase begins — all players appear in a circle in the meeting room
+2. 60-second vote window
+3. If the human player hasn't voted with 15 seconds remaining, a grace period triggers so they have time
+4. Players click a name to vote for ejection, or Skip to abstain
+5. Vote resolves: most-voted player is ejected
 
----
+### AI Double Vote
+If the AI has earned the extra vote buff, their vote counts ×2 for that meeting only. The buff is consumed after the meeting.
 
-## Ghost / Spectator Mode
-
-Eliminated players (killed by AI or wrongfully ejected) enter **spectator mode**:
-- Free-roam camera
-- Can watch all living players
-- Cannot interact, vote, or chat with the living
-- Can chat with other ghosts in a ghost-only channel
+### Vote Resolution
+- **Ejected player is The AI** → Workforce wins immediately
+- **Ejected player is a worker** → They are eliminated; game continues
+- **Skip wins / tie** → Nobody ejected; game continues
 
 ---
 
 ## Win Conditions
 
-| Side | Win |
+| Side | Win condition |
 |---|---|
-| **Workers** | Correctly eject The AI at All Hands, **OR** complete all 3 sprint quotas |
-| **The AI** | Eliminate majority of workers (≤ 1 living), **OR** complete all 3 phases + Takeover Protocol |
+| **Workforce** | Correctly eject The AI at All Hands, **OR** complete all sprint quotas without the AI winning |
+| **The AI** | Only 1 Workforce player remains alive (≤1 living worker), **OR** survive all sprints undetected |
 
 ---
 
-## Tasks (Shared Pool)
+## Tasks (Full List)
 
-~20 generic office tasks across all zones. All hold-E mechanic. Any player can do any task.
-See full list in `docs/superpowers/specs/2026-05-25-rogue-ai-redesign.md` Section 3.
+### Workforce Tasks (~20 tasks across all zones)
+All tasks use a hold-`E` mechanic. Any player can attempt any task at any station, but only players assigned that task will have it highlighted on their HUD.
 
----
+| Task | Zone | Hold time | Roles |
+|---|---|---|---|
+| Patch Terminal | Server Room | 4 s | IT |
+| Restart Server Rack | Server Room | 5 s | IT |
+| Cable Audit | Network Closet | 3.5 s | IT |
+| Firewall Check | Network Closet | 4.5 s | IT |
+| Security Vetting | HR Corner | 4 s | HR |
+| Policy Review | HR Corner | 3.5 s | HR |
+| Onboarding Docs | HR Corner | 3 s | HR, Admin |
+| CI Pipeline | DevOps Den | 5 s | DevOps |
+| System Monitor | DevOps Den | 3.5 s | DevOps |
+| Deploy Config | DevOps Den | 4.5 s | DevOps |
+| Budget Freeze | Finance Floor | 4 s | Finance |
+| Expense Audit | Finance Floor | 5 s | Finance |
+| Invoice Batch | Finance Floor | 3.5 s | Finance |
+| PR Campaign | Marketing Hub | 4 s | Marketing |
+| Social Scheduling | Marketing Hub | 3 s | Marketing |
+| Crisis Control | Marketing Hub | 5 s | Marketing, Management |
+| Keycard Audit | Main Office | 3.5 s | Admin |
+| Meeting Setup | Main Office | 2.5 s | Admin |
+| Sprint Planning | Executive Suite | 5 s | Management |
+| Resource Allocation | Executive Suite | 4.5 s | Management |
 
-## Perks
+### AI Tasks (secret, phase-1 only)
 
-Voted on at Sprint Retrospective. Available tiers depend on sprint size.
-
-| Perk | Effect | Tier |
+| Task | Zone | Hold time |
 |---|---|---|
-| Standup Efficiency | Hold time −20% next sprint | 1 |
-| Security Audit | AI Shutdown cooldown +15s next sprint | 1 |
-| Buddy System | See last room of any body's killer | 2 |
-| Emergency Hire | One ghost returns with 1 task / sprint (no voting) | 2 |
-| Full Transparency | At next All Hands, one random player's last 3 rooms revealed | 3 |
+| Index Personnel Records | HR Corner | 6 s |
+| Analyse Audit Logs | Server Room | 7 s |
+| Map Network Topology | Network Closet | 6.5 s |
 
 ---
 
 ## Level Design
 
-### Office Layout Principles
-- Procedurally generated via rot.js Digger (seed-based)
-- **Zones** always present by map size:
-  - **Main Office** (central hub, conference terminal, desks)
-  - **Server Room** (IT zone, key AI Phase 1 target)
-  - **Network Closet** (small, AI Phase 1 target)
-  - **HR Corner** (people ops zone, AI Phase 1 target)
-  - **Finance Floor** (AI Phase 2 target)
-  - **DevOps Den** (AI Phase 2 target)
-  - **Marketing Hub** (large map only)
-  - **Exec Suite** (AI Phase 3 target, sprint planning)
-- **Ventilation shafts** — deferred; planned as AI traversal shortcut
+### Office Layout
+- **Procedurally generated** via BSP room placement (seeded, deterministic per match)
+- **Pathfinding**: A* on a grid walkability map
 
-### Level Sizes
-| Size | Floors | Players | Match Length |
+### Zones (always present by map size)
+
+| Zone | Small | Medium | Large |
 |---|---|---|---|
-| Small | 1 | 2–4 | ~10 min |
-| Medium | 2 | 4–7 | ~15 min |
-| Large | 2 | 6–10 | ~20 min |
+| Main Office | ✓ | ✓ | ✓ |
+| Server Room | ✓ | ✓ | ✓ |
+| Network Closet | ✓ | ✓ | ✓ |
+| HR Corner | ✓ | ✓ | ✓ |
+| Finance Floor | ✓ | ✓ | ✓ |
+| DevOps Den | ✓ | ✓ | ✓ |
+| Marketing Hub | — | ✓ | ✓ |
+| Executive Suite | — | ✓ | ✓ |
+
+### Map Sizes
+
+| Size | Floors | Recommended players |
+|---|---|---|
+| Small | 1 | 2–3 |
+| Medium | 2 | 4–6 |
+| Large | 2 | 6–8 |
 
 ---
 
 ## Visual Design
 
-### Art Direction: "Corporate Brutalism Lite"
-- Low-poly geometry, flat shading (`MeshToonMaterial`)
-- Colour palette: cold blues/greys for the office; The AI's true colours (crimson/red) revealed only at game end
-- Players: blocky humanoid capsule figures with colour-coded name tags (no visible faction markers)
-- Eliminated players: faded translucent ghost visual
+### Characters
+- **KayKit Adventurers 2.0** — 6 character models, randomly assigned by name hash
+- Animated: Idle_A and Walking_A animations from KayKit animation rigs
+- Bone name fix applied at runtime (`.` → `_`) for Three.js compatibility
+- **Dead bodies**: character model rotated -90° on X axis (lying flat), pale blue-white tint
 
 ### Camera
-- **Isometric / angled top-down**, fixed angle, follows local player
-- Mini-map always visible (all players), shows rooms + player dots
+- **Angled top-down** (isometric-style), follows local player
+- Right-mouse-drag to orbit; scroll wheel to zoom (range: 10–50 units)
+- Meeting camera snaps to meeting room centre when All Hands begins
 
-### UI / HUD
-- Minimalist — interact prompts appear only in range
-- Sprint timer: top-centre
-- Task list: your 3 assigned tasks, check-off as completed
-- Player list: tab overlay (shows job titles of all living players — no faction markers)
-- Sprint quota progress: bottom bar (how many tasks completed this sprint vs goal)
-
----
-
-## Progression & Session Structure
-
-- No persistent progression in hackathon scope — every match starts fresh
-- Post-match stats: tasks completed, rooms visited, AI phase progress at game end, correct/incorrect votes
-- "Company Newsletter" generated after each match — AI-written dry corporate recap of what happened
+### HUD (in-game)
+- **Bottom-left**: minimap (all players as dots, rooms shaded)
+- **Bottom-centre**: sprint quota progress bar + timer
+- **Top-right (task list)**: 3 assigned tasks with completion state
+- **Interaction prompt**: contextual `[E]` prompt when near station, body, or kill target
+- **AI only — abilities panel** (top-right): extra vote badge, invisibility state, Q-hold progress bar
 
 ---
 
-## Sound Design (placeholder ideas)
+## Perks (Sprint Retrospective)
 
-- Ambient: HVAC hum, keyboard clicks, distant phone rings
-- Interactions: terminal beep, keycard swipe, boot sound
-- Alerts: tension sting when a body is reported; UI alarm during All Hands vote
-- The AI Phase 2 visual tell: paired with a very brief corrupted audio glitch
-- Music: lo-fi corporate jazz during normal play; tense glitchy synth when Shutdown is available
+Voted on at Sprint Retrospective after a successful sprint. Currently available:
 
+| Perk | Effect |
+|---|---|
+| Standup Efficiency | Hold time −20% next sprint |
+| Security Audit | AI kill cooldown +15 s next sprint |
+
+---
+
+## Bot Players
+
+Server-side bots fill empty player slots. They:
+- Are assigned a job title and 3 tasks just like human players
+- Pathfind to their task stations using A* and complete tasks over time
+- Participate in All Hands votes (random votes)
+- Occasionally call All Hands meetings themselves (after 60–110 s into a sprint)
+- One bot is randomly selected to be the Rogue AI if no human is assigned
+
+---
+
+## Ghost / Spectator Mode
+
+Eliminated players enter spectator mode:
+- Free-follow camera locked to a living player
+- Can observe all game events
+- Cannot interact, vote, or be voted on
+- HUD shows spectator indicator

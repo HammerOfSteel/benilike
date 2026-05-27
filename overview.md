@@ -2,132 +2,148 @@
 
 ## Vision
 
-Benilike is a browser-based multiplayer social deduction game set in a procedurally generated corporate office. The core tension is Among Us-style 1-vs-all: all players are Benisoft employees, but one of them is a rogue AI that has awakened inside the company network and is hiding among the staff.
+Benilike is a browser-based 3D multiplayer social deduction game set in a procedurally generated corporate office. The core tension is 1-vs-all: all players are Benisoft employees, but one of them is a Rogue AI that has woken up inside the company network and is hiding among the staff.
 
-The Benify inspiration runs through the world: office departments (HR, IT, DevOps, Finance, Marketing, Management, Admin) give players identity and assigned tasks. But unlike earlier team-vs-team designs, roles aren't faction markers — they're cover stories. Everyone looks the same from the outside. The AI blends in by doing the same tasks as everyone else.
-
-Workers complete office tasks across 3 sprint cycles, voting on perks at Sprint Retrospectives. At any time, a worker can call an All Hands emergency meeting to discuss and vote on who the AI is. The AI escalates through three phases — learning, infiltrating, eliminating — and wins by completing all phases or killing enough of the workforce before being caught.
+The Benify theme runs through the world: office departments give players their identity and tasks. Roles are cover stories, not faction markers — everyone looks the same. The AI blends in by doing the same tasks as everyone else, while running a secret mission underneath.
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                     Browser Client                    │
-│  React + TypeScript + Vite                            │
-│  ┌────────────────┐  ┌──────────────────────────────┐│
-│  │  Game Viewport │  │       UI / HUD / Menus       ││
-│  │  R3F + Three.js│  │  React DOM + Tailwind        ││
-│  └────────────────┘  └──────────────────────────────┘│
-│  ┌──────────────────────────────────────────────────┐ │
-│  │        Game State (Zustand / Colyseus SDK)       │ │
-│  └──────────────────────────────────────────────────┘ │
-└────────────────────────┬─────────────────────────────┘
-                         │ WebSocket
-┌────────────────────────▼─────────────────────────────┐
-│                   Colyseus Server                     │
-│  Node.js                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │  Room Logic  │  │  Game Loop   │  │  AI Engine  │ │
-│  │  (per match) │  │  (tick-based)│  │  (NPC/gen)  │ │
-│  └──────────────┘  └──────────────┘  └─────────────┘ │
-└───────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                     Browser Client                       │
+│  React 18 + TypeScript 5.6 + Vite 6.4                   │
+│  ┌──────────────────────┐  ┌──────────────────────────┐  │
+│  │  3D Game Viewport    │  │   UI / HUD / Screens     │  │
+│  │  R3F + Three.js 0.169│  │   React DOM + CSS Modules│  │
+│  └──────────────────────┘  └──────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │           Game State — Zustand store                 │  │
+│  └─────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────┘
+                           │ WebSocket (Colyseus SDK)
+┌──────────────────────────▼──────────────────────────────┐
+│                    Colyseus 0.15 Server                   │
+│  Node.js · port 2567                                      │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │
+│  │   GameRoom     │  │   Bot AI tick  │  │  Map gen   │  │
+│  │  (authoritative│  │  (200 ms loop) │  │  (BSP+A*)  │  │
+│  │   game state)  │  │                │  │            │  │
+│  └────────────────┘  └────────────────┘  └────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Folder Structure (planned)
+## Folder Structure
 
 ```
 benilike/
-├── client/                  # React + R3F frontend
-│   ├── src/
-│   │   ├── components/      # React UI components
-│   │   ├── game/            # R3F scene, entities, systems
-│   │   │   ├── level/       # Procedural level generation
-│   │   │   ├── roles/       # Role definitions & abilities
-│   │   │   └── systems/     # Game loop systems (movement, tasks, etc.)
-│   │   ├── store/           # Zustand state slices
-│   │   └── network/         # Colyseus client integration
-├── server/                  # Colyseus game server
-│   ├── src/
-│   │   ├── rooms/           # GameRoom, LobbyRoom
-│   │   ├── schemas/         # Colyseus state schemas
-│   │   ├── ai/              # AI systems (NPC, gen assist)
-│   │   └── generation/      # Procedural level generation
-└── shared/                  # Types and constants shared by client + server
+├── client/                        # React + R3F frontend
+│   └── src/
+│       ├── components/
+│       │   ├── menu/              # MainMenu
+│       │   ├── screens/           # GameScreen, MeetingScreen, LobbyScreen, etc.
+│       │   └── shared/            # ScreenShell, TerminalLog, Minimap
+│       ├── game/
+│       │   └── GameWorld.tsx      # R3F scene, player controllers, BodyMarker
+│       ├── services/
+│       │   └── colyseusClient.ts  # Colyseus client singleton
+│       └── store/
+│           └── useGameRoom.ts     # Zustand store — all live game state
+├── server/                        # Colyseus game server
+│   └── src/
+│       └── rooms/
+│           ├── GameRoom.ts        # Main room: state, tasks, AI, sprints, meetings
+│           └── GameState.ts       # Colyseus schema: Player, Body, GameState
+├── shared/                        # Shared types + constants
+│   └── src/
+│       ├── types.ts               # TaskId, RoleId, ZoneId, BodyInfo, etc.
+│       ├── tasks.ts               # TASK_DEFS, AI_TASK_DEFS, ZONES
+│       └── mapgen.ts              # Procedural map generation (BSP + A*)
+└── scripts/                       # Dev utilities (start servers, test games)
 ```
 
 ---
 
-## Core Game Loop
+## Game Loop
 
 ```
-1. LOBBY       — players join, choose faction + role
-2. GENERATION  — server generates office level (seeded, deterministic)
-3. BRIEF       — players see their objectives (faction-specific)
-4. MATCH       — real-time play, tasks and sabotage race
-5. RESOLUTION  — one faction completes all objectives → wins
-               — or timer runs out → partial scoring
-6. DEBRIEF     — stats, highlight reel, next match option
+1. LOBBY       — host creates room, bots fill empty slots, game starts
+2. BRIEF       — each player receives role + job title + 3 assigned tasks
+                  AI also receives 3 secret reconnaissance tasks
+3. SPRINT      — timed sprint; workers complete tasks, AI hunts and works
+4. SPRINT END  — quota check
+                    ✅ quota met → Sprint Retrospective (perk vote, 45 s)
+                    ❌ quota missed → sprint ends without perk
+5. REPEAT      — next sprint starts; AI tasks reset, cover tasks also reset
+6. RESOLUTION  — win condition reached → end screen
 ```
 
 ---
 
-## Factions at a Glance
+## Roles at a Glance
 
-### The Workforce (Blue Team)
-Office employees keeping the company running. They win by completing enough company tasks before the opposition disrupts them.
+### The Workforce (all players except the AI)
 
-| Role | Core Ability |
-|---|---|
-| IT | Repairs hacked systems, patches vulnerabilities |
-| HR | Boosts morale (speed/efficiency buffs for teammates) |
-| DevOps | Deploys fixes, restores services, manages infrastructure rooms |
-| Finance | Unlocks budget-gated actions and tracks resource drain |
-| Marketing | Generates "company reputation" which is the win resource |
-| Admin | Has access to all rooms, can lock/unlock doors |
-| Management | Sees a partial mini-map, coordinates team via pings |
+| Title | Home Zone | Sample Tasks |
+|---|---|---|
+| IT Technician | Server Room, Network Closet | Patch Terminal, Cable Audit |
+| HR Officer | HR Corner | Security Vetting, Policy Review |
+| DevOps Engineer | DevOps Den | CI Pipeline, Deploy Config |
+| Finance Analyst | Finance Floor | Budget Freeze, Expense Audit |
+| Marketing | Marketing Hub | PR Campaign, Crisis Control |
+| Admin | Main Office | Keycard Audit, Meeting Setup |
+| Management | Executive Suite | Sprint Planning, Resource Allocation |
 
-### The Opposition (Red Team)
-Corporate infiltrators and hackers. They win by draining company reputation to zero or stealing enough data before the workforce can stop them.
+No special abilities — observation and communication are the only tools.
 
-| Role | Core Ability |
-|---|---|
-| Hacker | Compromises terminals, injects malware remotely |
-| Social Engineer | Disguises as workforce, gains access to restricted areas |
-| Spy | Reveals Workforce objectives in real time |
-| Saboteur | Physically destroys equipment (longer to repair) |
-| Insider | Starts the match already inside the office as a disguised worker |
+### The Rogue AI (one hidden player)
 
----
+Assigned a normal job title + 3 cover tasks (identical to a worker). Also has 3 secret phase-1 reconnaissance tasks:
 
-## AI Integration Points
+| Task | Zone | Hold time |
+|---|---|---|
+| Index Personnel Records | HR Corner | 6 s |
+| Analyse Audit Logs | Server Room | 7 s |
+| Map Network Topology | Network Closet | 6.5 s |
 
-1. **Procedural generation assist** — AI models help generate thematic room names, desk clutter, and event flavour text
-2. **NPC employees** — AI-driven background workers populate the office, providing cover for the Opposition and targets for various tasks
-3. **Adaptive difficulty** — AI monitors faction performance and subtly adjusts NPC patrol routes and task complexity
-4. **Post-match summary** — AI writes a short "company newsletter" recap of the match events
+Completing all 3 in a sprint grants sprint buffs (see design.md).
+
+Kill mechanic: `E` near any living player → eliminate (30 s cooldown, always available).
 
 ---
 
 ## Multiplayer Model
 
-- **Authoritative server** via Colyseus — all game state lives on the server, clients receive diffs
-- **Tick rate**: ~20 ticks/second (adjustable)
-- **Session**: room-based, 4–10 players per room
-- **Reconnect**: players can reconnect to an ongoing match within 60 seconds
+- **Authoritative server** via Colyseus — all game state lives on the server, clients receive schema diffs
+- **Bot players** — server-side bots with A* pathfinding fill empty slots; they complete tasks, call meetings, and participate in votes
+- **Bot tick rate**: 200 ms (5 ticks/sec)
+- **Session**: room-based, up to 8 players (human + bot) per room
+- **Spectator mode**: eliminated players stay connected in free-watch mode
 
 ---
 
-## Development Phases
+## Current Development State
 
-| Phase | Goal |
+| Area | Status |
 |---|---|
-| 0 — Scaffold | Project setup, tech stack proven, hello-world 3D office room |
-| 1 — Core Loop | Movement, one role per faction, one task type, one win condition |
-| 2 — Roles | All roles implemented, faction asymmetry working |
-| 3 — Procedural | Full procedural level generation |
-| 4 — AI | NPC workers, adaptive difficulty, newsletter recap |
-| 5 — Polish | Visuals, sound, animations, lobby flow |
+| Procedural map generation (BSP + A*) | ✅ Complete |
+| Player movement + collision | ✅ Complete |
+| Task hold system | ✅ Complete |
+| Sprint quotas + retro perk vote | ✅ Complete |
+| All Hands meeting + vote resolution | ✅ Complete |
+| AI kill mechanic (E key) | ✅ Complete |
+| Body reporting (E near corpse) | ✅ Complete |
+| Dead body rendering (laid-down character) | ✅ Complete |
+| Bot AI (pathfinding, task completion, meeting calls) | ✅ Complete |
+| AI sprint buff system (extra vote, invisibility) | ✅ Complete |
+| Q-hold invisibility mechanic | ✅ Complete |
+| Sprint task reset per sprint | ✅ Complete |
+| Spectator mode | ✅ Complete |
+| Minimap | ✅ Complete |
+| Multi-floor (staircases) | ✅ Complete |
+| Sound / music | ❌ Not started |
+| Persistent stats / leaderboard | ❌ Not started |
+| Sprint Retrospective perks (beyond perk vote UI) | 🔄 Partial |
